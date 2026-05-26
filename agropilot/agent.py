@@ -168,11 +168,11 @@ def _call(system: str, user: str) -> str:
     for attempt, delay in enumerate(delays):
         try:
             llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
+                model="gemini-3.1-flash-lite",
                 google_api_key=key,
                 temperature=0.2,
                 max_output_tokens=4096,
-                timeout=3, # Explicit 3-second network hang timeout guard
+                timeout=90,
             )
             resp = llm.invoke([
                 SystemMessage(content=system),
@@ -194,7 +194,8 @@ def _parse_json(raw: str, fallback):
     clean = re.sub(r"\x60\x60\x60(?:json)?", "", raw).strip().rstrip("\x60").strip()
     try:
         return json.loads(clean)
-    except Exception:
+    except Exception as e:
+        print(f"JSON Parse Error: {e}\nRaw output was:\n{raw}")
         return fallback
 
 
@@ -213,99 +214,19 @@ def node_parse(state: QuoteState) -> dict:
     
     email_text = state['rfq_email'].lower()
     
-    # Dynamic deterministic fallbacks based on selected machine scenarios with currency routing
-    if "padi-mas" in email_text or "malaysia" in email_text or "kedah" in email_text:
-        fallback_parse = {
-            "rfq_id": "AQ-2026-MY-0711",
-            "dealer_company": "Kedah Padi Mas Co-operative",
-            "dealer_contact": "Rahim Ali (Fleet Operations Director)",
-            "dealer_email": "rahim.ali@kedah-padi-mas.com.my",
-            "farm_operator": "Kedah Paddy Estates (Rahim Ali)",
-            "farm_location": "Alor Setar, Kedah, Malaysia",
-            "country_code": "MY",
-            "currency_symbol": "RM ",
-            "delivery_deadline": "August 2026",
-            "budget_usd_min": 90000,
-            "budget_usd_max": 130000,
-            "equipment_category": "tractor",
-            "base_model_requested": "Kubota M9540",
-            "oem_brand": "Kubota",
-            "farming_operation": "rice-paddy",
-            "horsepower_required": 95,
-            "acreage": 1200,
-            "requirements": {
-                "engine": "4-cylinder turbocharged diesel",
-                "transmission": "Hydraulic Shuttle with creeper",
-                "hydraulics": "High-flow required",
-                "cab": "Air-conditioned enclosed cabin",
-                "precision_tech": ["GPS auto-steer guidance", "Variable Rate Application (VRA) fertilizer controller", "Telematics module"],
-                "implements": ["Heavy-duty Paddy Rotary Tiller", "Precision Variable Rate Fertilizer Spreader"],
-                "other": []
-            },
-            "compliance_needed": ["SIRIM safety guidelines", "Euro III equivalent emissions"]
-        }
-    elif "case ih" in email_text or "optum" in email_text:
-        fallback_parse = {
-            "rfq_id": "AQ-2026-0089",
-            "dealer_company": "Sunrise Farm Equipment",
-            "dealer_contact": "Brett Wilson (Sales Rep)",
-            "dealer_email": "brett.wilson@sunrisefarm-equipment.com.au",
-            "farm_operator": "Sunrise Station Pty Ltd (Bruce Murphy)",
-            "farm_location": "Darling Downs, Queensland, Australia",
-            "country_code": "AU",
-            "currency_symbol": "AU$",
-            "delivery_deadline": "March 2026",
-            "budget_usd_min": 270000,
-            "budget_usd_max": 310000,
-            "equipment_category": "tractor",
-            "base_model_requested": "Case IH Optum 300 CVX",
-            "oem_brand": "Case IH",
-            "farming_operation": "mixed livestock",
-            "horsepower_required": 300,
-            "acreage": 1800,
-            "requirements": {
-                "engine": "6-cylinder diesel",
-                "transmission": "CVT",
-                "hydraulics": "High-flow",
-                "cab": "Standard enclosed cab",
-                "precision_tech": ["AFS GPS auto-steer", "AFS Connect telematics"],
-                "implements": ["Front end loader (Quicke Q7M)", "3-point linkage rear blade"],
-                "other": []
-            },
-            "compliance_needed": ["ADR emissions", "ROPS AS 1636 certification"]
-        }
-    else:
-        fallback_parse = {
-            "rfq_id": "AQ-2026-0412",
-            "dealer_company": "Green Prairie Equipment",
-            "dealer_contact": "Sarah Johnson (Sales Manager)",
-            "dealer_email": "sarah.johnson@greenprairie-equipment.com",
-            "farm_operator": "Green Prairie Farms LLC (Tom Hendricks)",
-            "farm_location": "Story County, Iowa, USA",
-            "country_code": "US",
-            "currency_symbol": "$",
-            "delivery_deadline": "Before April 15, 2026",
-            "budget_usd_min": 380000,
-            "budget_usd_max": 450000,
-            "equipment_category": "tractor",
-            "base_model_requested": "John Deere 7R 330",
-            "oem_brand": "John Deere",
-            "farming_operation": "row-crop",
-            "horsepower_required": 330,
-            "acreage": 3200,
-            "requirements": {
-                "engine": "9-cylinder diesel preferred",
-                "transmission": "CommandQuad preferred",
-                "hydraulics": "High-flow required",
-                "cab": "Premium soundproof cab",
-                "precision_tech": ["GPS auto-steer", "Variable Rate Application (VRA) controller", "JDLink telematics", "Generation 4 CommandCenter display"],
-                "implements": ["36-row John Deere DB90 Planter", "Front linkage for toolbar"],
-                "other": []
-            },
-            "compliance_needed": ["EPA Tier 4 Final", "USDA NRCS eligibility"]
-        }
+    fallback_parse = {}
     
     parsed = _parse_json(raw, fallback_parse)
+    
+    # Sanitize missing/null values to prevent crashes in downstream string operations
+    for str_key in ["base_model_requested", "oem_brand", "country_code", "equipment_category"]:
+        if parsed.get(str_key) is None:
+            parsed[str_key] = ""
+            
+    for num_key in ["budget_usd_min", "budget_usd_max", "horsepower_required", "acreage"]:
+        if parsed.get(num_key) is None:
+            parsed[num_key] = 0
+
     if "currency_symbol" not in parsed:
         cc = parsed.get("country_code", "US").upper()
         parsed["currency_symbol"] = "RM " if cc == "MY" else ("AU$" if cc == "AU" else "$")
@@ -348,48 +269,7 @@ def node_configurator(state: QuoteState) -> dict:
 
     user_msg = f"Build BOM array matching context:\n{json.dumps(parsed)}\n{compliance_rules}\n{compat_check}\n{product_data}\n{objection_block}"
     
-    if "kubota" in brand.lower() or "my" in parsed.get("country_code", "").lower():
-        proposed_hydraulic_sku = "KUB-HYD-MID" if round_n == 0 else "KUB-HYD-HIFLO"
-        proposed_hydraulic_desc = "Mid-Range Hydraulic Pump (14 gpm)" if round_n == 0 else "High-Flow Hydraulic Pump Upgrade (22 gpm)"
-        proposed_hydraulic_status = "DRAFT" if round_n == 0 else "SUBSTITUTED"
-        proposed_hydraulic_reason = "Base hydraulic selector option" if round_n == 0 else "Resolved Critic Blocking Objection #1"
-        proposed_hydraulic_price = 1800 if round_n == 0 else 3800
-
-        fallback_bom = [
-            {"sku": "KUB-M9540-BASE", "component_type": "base_unit", "description": "Kubota M9540 Mud-Special Utility Tractor", "qty": 1, "unit_price_usd": 68000, "status": "DRAFT", "compatibility_note": "Core mud flotation wet paddock unit"},
-            {"sku": "KUB-ENG-V3800", "component_type": "engine", "description": "Kubota V3800-CR-TE4 4-Cylinder Turbo Diesel", "qty": 1, "unit_price_usd": 12500, "status": "DRAFT", "compatibility_note": "SIRIM & JAS Euro III emission compliant"},
-            {"sku": "KUB-TRN-CREEP", "component_type": "transmission", "description": "Hydraulic Shuttle 12F/12R with Creeper gear", "qty": 1, "unit_price_usd": 5500, "status": "DRAFT", "compatibility_note": "Ensures paddy traction"},
-            {"sku": proposed_hydraulic_sku, "component_type": "hydraulics", "description": proposed_hydraulic_desc, "qty": 1, "unit_price_usd": proposed_hydraulic_price, "status": proposed_hydraulic_status, "compatibility_note": "Drives hydraulic implement controls", "reasoning": proposed_hydraulic_reason},
-            {"sku": "KUB-CAB-AC", "component_type": "cab", "description": "Fully Enclosed Cabin with Equatorial AC System", "qty": 1, "unit_price_usd": 7500, "status": "DRAFT", "compatibility_note": "Provides moisture insulation for precision electronics"},
-            {"sku": "KUB-GPS-GUIDE", "component_type": "precision_tech", "description": "Kubota GeoPoint sub-meter GPS auto-steer receiver", "qty": 1, "unit_price_usd": 5200, "status": "DRAFT", "compatibility_note": "Fully compatible with hydraulic steering systems"},
-            {"sku": "KUB-TECH-VRA", "component_type": "precision_tech", "description": "VRA Rate-Control Spreader Actuator Unit", "qty": 1, "unit_price_usd": 2400, "status": "DRAFT", "compatibility_note": "Driven seamlessly via high-flow hydraulic track lines"},
-            {"sku": "KUB-IMPL-TILL", "component_type": "implement", "description": "Slasher-Tiller wide paddy puddling rotary rotor", "qty": 1, "unit_price_usd": 6500, "status": "DRAFT", "compatibility_note": "Fitted with wet field floating pads"},
-            {"sku": "KUB-IMPL-SPRD", "component_type": "implement", "description": "Sola-VRA Hopper Spreader Implement (1200L)", "qty": 1, "unit_price_usd": 8500, "status": "DRAFT", "compatibility_note": "Fully calibrated with rate control receiver unit"}
-        ]
-    elif "case" in brand.lower() or "optum" in parsed.get("base_model_requested", "").lower():
-        fallback_bom = [
-            {"sku": "CIH-OPTUM-300", "component_type": "base_unit", "description": "Case IH Optum 300 CVX Drive Tractor", "qty": 1, "unit_price_usd": 245000, "status": "DRAFT", "compatibility_note": "Core unit selected"},
-            {"sku": "CIH-ENG-6CYL", "component_type": "engine", "description": "6-Cylinder 6.7L FPT Stage V Diesel Engine", "qty": 1, "unit_price_usd": 22000, "status": "DRAFT", "compatibility_note": "Compliant with Australian ADR emission standards"},
-            {"sku": "CIH-TRN-CVT", "component_type": "transmission", "description": "CVDrive Continuously Variable Transmission", "qty": 1, "unit_price_usd": 12500, "status": "DRAFT", "compatibility_note": "Supports AFS AccuGuide integration"},
-            {"sku": "CIH-HYD-HIFLO", "component_type": "hydraulics", "description": "High-Flow Hydraulic Pump (58 gpm / 220 lpm)", "qty": 1, "unit_price_usd": 6800, "status": "DRAFT", "compatibility_note": "Provides sufficient capacity for front loader"},
-            {"sku": "CIH-CAB-STD", "component_type": "cab", "description": "Standard Cab with Certified ROPS AS 1636 Structure", "qty": 1, "unit_price_usd": 8500, "status": "DRAFT", "compatibility_note": "Meets Australian safety mandates"},
-            {"sku": "CIH-TECH-GPS", "component_type": "precision_tech", "description": "AFS Vector Pro GPS Auto-Steer Receiver", "qty": 1, "unit_price_usd": 9500, "status": "DRAFT", "compatibility_note": "Fully compatible with CVDrive system"},
-            {"sku": "CIH-TECH-CONN", "component_type": "precision_tech", "description": "AFS Connect Telematics Module with 3-Yr Sub", "qty": 1, "unit_price_usd": 3200, "status": "DRAFT", "compatibility_note": "Integrated with standard cab electrical loop"},
-            {"sku": "CIH-IMPL-LDR", "component_type": "implement", "description": "Quicke Q7M Professional Front End Loader", "qty": 1, "unit_price_usd": 14500, "status": "DRAFT", "compatibility_note": "Calibrated with front linkage controls"},
-            {"sku": "CIH-IMPL-BLD", "component_type": "implement", "description": "Heavy-Duty 3-Point rear grading blade (9ft)", "qty": 1, "unit_price_usd": 4200, "status": "DRAFT", "compatibility_note": "Standard Category 3 hitch mounting"}
-        ]
-    else:
-        fallback_bom = [
-            {"sku": "JD-7R-330-BASE", "component_type": "base_unit", "description": "John Deere 7R 330 Premium Row-Crop Tractor", "qty": 1, "unit_price_usd": 325000, "status": "DRAFT", "compatibility_note": "Core unit selected"},
-            {"sku": "JD-ENG-69L", "component_type": "engine", "description": "6-Cylinder 9.0L Marine-Grade PowerTech Diesel Engine", "qty": 1, "unit_price_usd": 28500, "status": "SUBSTITUTED", "compatibility_note": "Substituted 9-cylinder with 6-cylinder to clear CAN-bus auto-steer constraints.", "reasoning": "Resolved Critic Blocking Objection #1"},
-            {"sku": "JD-TRN-CMDQ", "component_type": "transmission", "description": "CommandQuad Eco 20F/20R Efficiency Transmission", "qty": 1, "unit_price_usd": 14500, "status": "DRAFT", "compatibility_note": "Provides electronic tracking links"},
-            {"sku": "JD-HYD-HIFLO", "component_type": "hydraulics", "description": "High-Flow Dual Pump Hydraulic System (85 gpm)", "qty": 1, "unit_price_usd": 9200, "status": "DRAFT", "compatibility_note": "Meets 36-row precision planetary requirement"},
-            {"sku": "JD-CAB-PREM", "component_type": "cab", "description": "Premium CommandView Enclosed Cab with ActiveSeat II", "qty": 1, "unit_price_usd": 16000, "status": "DRAFT", "compatibility_note": "Meets power/VRA electrical distribution guidelines"},
-            {"sku": "JD-TECH-SF7K", "component_type": "precision_tech", "description": "StarFire 7000 Integrated GPS Auto-Steer Receiver", "qty": 1, "unit_price_usd": 11200, "status": "DRAFT", "compatibility_note": "Fully compatible with upgraded 6-cylinder digital CAN-bus"},
-            {"sku": "JD-TECH-VRA", "component_type": "precision_tech", "description": "Generation 4 VRA Flow & Rate Control Unit", "qty": 1, "unit_price_usd": 5400, "status": "DRAFT", "compatibility_note": "Driven seamlessly via high-flow hydraulic tracks"},
-            {"sku": "JD-TECH-LINK", "component_type": "precision_tech", "description": "JDLink Connectivity Module & Remote Telematics Guidance", "qty": 1, "unit_price_usd": 3800, "status": "DRAFT", "compatibility_note": "Fully isolated enclosed electrical loop"},
-            {"sku": "JD-PLNT-DB90", "component_type": "implement", "description": "DB90 36-Row Precision Variable Planter Interface", "qty": 1, "unit_price_usd": 48000, "status": "DRAFT", "compatibility_note": "Calibrated with dual hydraulic couplers"}
-        ]
+    fallback_bom = []
     
     raw = _call(CONFIGURATOR_SYSTEM, user_msg)
     bom = _parse_json(raw, fallback_bom)
@@ -425,49 +305,11 @@ def node_critic(state: QuoteState) -> dict:
     country = parsed.get("country_code", "US").lower()
     round_n = state.get("debate_round", 1)
 
-    if "case" in brand.lower() or "optum" in parsed.get("base_model_requested", "").lower():
-        fallback_audit = {
-            "cleared": True,
-            "objections": [],
-            "audit_summary": "Case IH configuration fully clears Australian Design Rules (ADR) and AS 1636 ROPS requirements."
-        }
-    elif "kubota" in brand.lower() or "my" in country:
-        if round_n == 1:
-            fallback_audit = {
-                "cleared": False,
-                "objections": [
-                    {
-                        "objection_number": 1,
-                        "component_sku": "KUB-HYD-MID",
-                        "severity": "BLOCKING",
-                        "rule_violated": "VRA Spreader ↔ Hydraulics Incompatibility",
-                        "issue": "Proposing mid-range hydraulics for the Kubota M9540 fails to supply the high-flow fluid dynamics required to actuate the Sola-VRA Hopper spreading rotors.",
-                        "required_action": "Upgrade hydraulic flow pump package to KUB-HYD-HIFLO (22 gpm upgrade package)."
-                    }
-                ],
-                "audit_summary": "Paddy Tractor setup fails minimum hydraulic flow requirements for precise VRA fertilizer spinners."
-            }
-        else:
-            fallback_audit = {
-                "cleared": True,
-                "objections": [],
-                "audit_summary": "All technical compliance and SIRIM standards resolved successfully after upgrading hydraulic subsystem."
-            }
-    else:
-        fallback_audit = {
-            "cleared": True,
-            "objections": [
-                {
-                    "objection_number": 1,
-                    "component_sku": "JD-ENG-9CYL",
-                    "severity": "BLOCKING",
-                    "rule_violated": "9-Cylinder Engine ↔ CommandQuad/AutoSteer Integration Conflict",
-                    "issue": "Requested 9-cylinder architecture flags bandwidth saturation issues across digital CAN-bus telemetry arrays, locking out target sub-inch GPS auto-steer systems.",
-                    "required_action": "Downgrade base powercore platform to 6-Cylinder Stage-V engine to free digital bandwidth."
-                }
-            ],
-            "audit_summary": "All baseline technical components successfully cleared via rule-based agent substitution loops."
-        }
+    fallback_audit = {
+        "cleared": True,
+        "objections": [],
+        "audit_summary": ""
+    }
     
     raw = _call(CRITIC_SYSTEM, f"Audit following specification matrix:\n{json.dumps(bom)}\nPre-tool validation check: {compat_result}")
     audit = _parse_json(raw, fallback_audit)
@@ -496,42 +338,7 @@ def node_sentinel(state: QuoteState) -> dict:
     brand = parsed.get("oem_brand", "John Deere")
     country = parsed.get("country_code", "US").lower()
     
-    if "case" in brand.lower() or "optum" in parsed.get("base_model_requested", "").lower():
-        fallback_sentinel = {
-            "win_probability_pct": 92,
-            "win_level": "HIGH",
-            "gross_margin_pct": 28.5,
-            "margin_vs_floor_pts": 10.5,
-            "discount_risk": "LOW",
-            "recommendation": "APPROVE AS-IS",
-            "deal_rationale": "High budget alignment with low configuration risk makes this livestock setup extremely winnable.",
-            "upsell_opportunity": "AFS Connect Telematics Advanced 5-Year subscription extension pack",
-            "sentinel_flag": None
-        }
-    elif "kubota" in brand.lower() or "my" in country:
-        fallback_sentinel = {
-            "win_probability_pct": 88,
-            "win_level": "HIGH",
-            "gross_margin_pct": 31.2,
-            "margin_vs_floor_pts": 13.2,
-            "discount_risk": "LOW",
-            "recommendation": "APPROVE AS-IS",
-            "deal_rationale": "High product margin combined with localized paddy specialization. The bundle sits perfectly within the operator's targeted regional budget threshold.",
-            "upsell_opportunity": "SIRIM certified mud-tyre set + 2-Year extended Kubota Care warranty plan",
-            "sentinel_flag": None
-        }
-    else:
-        fallback_sentinel = {
-            "win_probability_pct": 60,
-            "win_level": "MEDIUM",
-            "gross_margin_pct": 18.0,
-            "margin_vs_floor_pts": 8.0,
-            "discount_risk": "MEDIUM",
-            "recommendation": "NEGOTIATE",
-            "deal_rationale": "This quote offers a healthy margin but is currently over the customer's stated budget. There's room to negotiate on price while still maintaining good profitability.",
-            "upsell_opportunity": "Extended warranty and a multi-year precision ag service plan",
-            "sentinel_flag": None
-        }
+    fallback_sentinel = {}
     
     raw = _call(SENTINEL_SYSTEM, f"Analyse Deal: {json.dumps(state['bom'])}")
     sentinel = _parse_json(raw, fallback_sentinel)
