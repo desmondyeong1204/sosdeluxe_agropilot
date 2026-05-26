@@ -3,7 +3,7 @@ app.py — AgriQuote · Dark UI matching QuotePilot V3.0 design
 Run: streamlit run app.py
 """
 
-import os, time
+import os, time, queue, threading
 import streamlit as st
 import pandas as pd
 from agent import build_graph, SAMPLE_RFQ, QuoteState, _calculate_totals
@@ -810,90 +810,119 @@ if run_clicked and rfq.strip():
     start_time  = time.time()
     accumulated_state = dict(initial)
 
-    try:
-        for step in graph.stream(initial):
-            node_name  = list(step.keys())[0]
-            node_state = step[node_name]
+    # ── Background worker streams graph steps into a queue ──────────────────
+    def _graph_worker(g, init, q):
+        try:
+            for s in g.stream(init):
+                q.put(("step", s))
+            q.put(("done", None))
+        except Exception as e:
+            q.put(("error", e))
 
+    _q = queue.Queue()
+    _t = threading.Thread(target=_graph_worker, args=(graph, initial, _q), daemon=True)
+    _t.start()
+
+    # ── Main thread: tick timer every 0.5 s, render on each new step ─────────
+    try:
+        while _t.is_alive() or not _q.empty():
+            # Always update the timer
             elapsed = int(time.time() - start_time)
             st.session_state.elapsed = elapsed
-
             hero_slot.markdown(render_hero(fmt_time(elapsed)), unsafe_allow_html=True)
 
-            for key, val in node_state.items():
-                if key == "log":
-                    accumulated_state["log"] = accumulated_state.get("log", []) + val
-                else:
-                    accumulated_state[key] = val
+            # Drain all queued steps that arrived since last tick
+            while True:
+                try:
+                    kind, data = _q.get_nowait()
+                except queue.Empty:
+                    break
 
-            pipeline_bar_slot.markdown(
-                render_pipeline_bar(NODE_STAGE.get(node_name, "")),
-                unsafe_allow_html=True,
-            )
+                if kind == "error":
+                    raise data
+                if kind == "done":
+                    continue
 
-            all_logs = accumulated_state["log"]
-            st.session_state.all_logs = all_logs
+                # kind == "step"
+                node_name  = list(data.keys())[0]
+                node_state = data[node_name]
 
-            swarm_badge = "badge-awaiting" if node_name != "node_generate_quote" else "badge-final"
-            swarm_label = "⏳ AWAITING" if node_name != "node_generate_quote" else "✓ COMPLETE"
+                for key, val in node_state.items():
+                    if key == "log":
+                        accumulated_state["log"] = accumulated_state.get("log", []) + val
+                    else:
+                        accumulated_state[key] = val
 
-            log_slot.markdown(f"""
-            <div class="panel">
-              <div class="panel-header">
-                <span class="panel-title">⚡ AGENT SWARM</span>
-                <span class="panel-badge {swarm_badge}">{swarm_label}</span>
-              </div>
-              <div class="panel-body" style="max-height:300px;overflow-y:auto">
-                {render_log(all_logs)}
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+                pipeline_bar_slot.markdown(
+                    render_pipeline_bar(NODE_STAGE.get(node_name, "")),
+                    unsafe_allow_html=True,
+                )
 
-            if node_name != "node_parse":
-                rfq_badge_slot.markdown(f"""
-                <div class="panel" style="margin-bottom:16px">
+                all_logs = accumulated_state["log"]
+                st.session_state.all_logs = all_logs
+
+                swarm_badge = "badge-awaiting" if node_name != "node_generate_quote" else "badge-final"
+                swarm_label = "⏳ AWAITING" if node_name != "node_generate_quote" else "✓ COMPLETE"
+
+                log_slot.markdown(f"""
+                <div class="panel">
                   <div class="panel-header">
-                    <span class="panel-title">📧 INBOUND RFQ</span>
-                    <span class="panel-badge badge-parsed">✓ PARSED</span>
+                    <span class="panel-title">⚡ AGENT SWARM</span>
+                    <span class="panel-badge {swarm_badge}">{swarm_label}</span>
                   </div>
-                  <div class="panel-body">
-                    <div class="rfq-text">{rfq_preview}</div>
+                  <div class="panel-body" style="max-height:300px;overflow-y:auto">
+                    {render_log(all_logs)}
                   </div>
                 </div>
                 """, unsafe_allow_html=True)
 
-            parsed_meta = accumulated_state.get("parsed_rfq", {})
-            curr_sym = parsed_meta.get("currency_symbol", "$")
+                if node_name != "node_parse":
+                    rfq_badge_slot.markdown(f"""
+                    <div class="panel" style="margin-bottom:16px">
+                      <div class="panel-header">
+                        <span class="panel-title">📧 INBOUND RFQ</span>
+                        <span class="panel-badge badge-parsed">✓ PARSED</span>
+                      </div>
+                      <div class="panel-body">
+                        <div class="rfq-text">{rfq_preview}</div>
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-            bom  = accumulated_state.get("bom", [])
-            tots = _calculate_totals(bom) if bom else {"subtotal":0,"delivery":0,"taxes":0,"total":0}
-            bom_badge = "badge-final" if accumulated_state.get("compliance_cleared") else "badge-awaiting"
-            bom_label = "✓ FINAL" if accumulated_state.get("compliance_cleared") else "⏳ DRAFT"
-            
-            bom_panel_header_slot.markdown(f"""
-            <div class="panel" style="margin-bottom:16px; padding-bottom:0px; border-bottom:none;">
-              <div class="panel-header">
-                <span class="panel-title">📋 BILL OF MATERIALS</span>
-                <span class="panel-badge {bom_badge}">{bom_label}</span>
-              </div>
-              <div class="panel-body" style="padding-bottom:0px;">
-            """, unsafe_allow_html=True)
-            bom_content_slot.markdown(render_bom_table(bom, tots, curr_sym), unsafe_allow_html=True)
+                parsed_meta = accumulated_state.get("parsed_rfq", {})
+                curr_sym = parsed_meta.get("currency_symbol", "$")
 
-            audit = accumulated_state.get("compliance", {})
-            cleared = accumulated_state.get("compliance_cleared", False)
-            audit_badge = "badge-cleared" if cleared else "badge-awaiting"
-            audit_label = "✓ CLEARED" if cleared else "⏳ AUDITING"
-            
-            audit_panel_header_slot.markdown(f"""
-            <div class="panel" style="padding-bottom:0px; border-bottom:none;">
-              <div class="panel-header">
-                <span class="panel-title">🛡️ AUDIT PROTOCOL</span>
-                <span class="panel-badge {audit_badge}">{audit_label}</span>
-              </div>
-              <div class="panel-body" style="padding-bottom:0px;">
-            """, unsafe_allow_html=True)
-            audit_content_slot.markdown(render_audit(audit), unsafe_allow_html=True)
+                bom  = accumulated_state.get("bom", [])
+                tots = _calculate_totals(bom) if bom else {"subtotal":0,"delivery":0,"taxes":0,"total":0}
+                bom_badge = "badge-final" if accumulated_state.get("compliance_cleared") else "badge-awaiting"
+                bom_label = "✓ FINAL" if accumulated_state.get("compliance_cleared") else "⏳ DRAFT"
+
+                bom_panel_header_slot.markdown(f"""
+                <div class="panel" style="margin-bottom:16px; padding-bottom:0px; border-bottom:none;">
+                  <div class="panel-header">
+                    <span class="panel-title">📋 BILL OF MATERIALS</span>
+                    <span class="panel-badge {bom_badge}">{bom_label}</span>
+                  </div>
+                  <div class="panel-body" style="padding-bottom:0px;">
+                """, unsafe_allow_html=True)
+                bom_content_slot.markdown(render_bom_table(bom, tots, curr_sym), unsafe_allow_html=True)
+
+                audit = accumulated_state.get("compliance", {})
+                cleared = accumulated_state.get("compliance_cleared", False)
+                audit_badge = "badge-cleared" if cleared else "badge-awaiting"
+                audit_label = "✓ CLEARED" if cleared else "⏳ AUDITING"
+
+                audit_panel_header_slot.markdown(f"""
+                <div class="panel" style="padding-bottom:0px; border-bottom:none;">
+                  <div class="panel-header">
+                    <span class="panel-title">🛡️ AUDIT PROTOCOL</span>
+                    <span class="panel-badge {audit_badge}">{audit_label}</span>
+                  </div>
+                  <div class="panel-body" style="padding-bottom:0px;">
+                """, unsafe_allow_html=True)
+                audit_content_slot.markdown(render_audit(audit), unsafe_allow_html=True)
+
+            time.sleep(0.5)   # yield for 0.5 s then tick timer again
 
     except Exception as exc:
         st.error(f"Pipeline error: {exc}")
