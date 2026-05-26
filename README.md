@@ -1,91 +1,229 @@
 # AgroPilot — Autonomous Sales Engineer (CPQ Agent Swarm) 🌾
 
-**AgroPilot** is an advanced multi-agent artificial intelligence application engineered for Automated Agricultural Equipment Configuration, Pricing, and Quotation (CPQ). Built for the **AI Marathon 2026 (Problem Statement 1: The Autonomous Sales Engineer)**, AgroPilot ingests messy, unformatted, and unstructured inbound dealer or customer Request for Quote (RFQ) emails and orchestrates a stateful multi-agent swarm via **LangGraph** to construct an engineered, conflict-free Bill of Materials (BOM) and verified compliance audits in seconds.
+**AgroPilot** is an advanced multi-agent artificial intelligence platform engineered for automated Agricultural Equipment Configuration, Pricing, and Quotation (CPQ).
+
+Built for the **AI Marathon 2026** *(Problem Statement 1: The Autonomous Sales Engineer)*, AgroPilot ingests messy, unformatted, and unstructured inbound dealer or customer Request for Quote (RFQ) emails and orchestrates a stateful multi-agent swarm using **LangGraph** to construct an engineered, conflict-free Bill of Materials (BOM) and verified compliance audits within seconds. 
 
 ---
 
-## 🏗️ System Architecture & Workflow
+# 🏗️ System Architecture & Workflow
 
-AgroPilot operates as a deterministic state machine managed by a LangGraph workflow. The application features a 5-stage automated orchestration engine:
+AgroPilot operates as a deterministic state machine managed through a LangGraph workflow. The platform features a 5-stage automated orchestration engine:
 
-1. **RFQ Parser (Stage 1)**: Strips metadata, extraction properties, parameters, and constraints directly from raw unstructured texts.
-2. **Configurator Agent (Stage 2)**: Engineers a matching Bill of Materials (BOM) by cross-referencing OEM specs, pricing models, and structural choices.
-3. **Critic Agent (Stage 3 & 4)**: Reviews engineering compliance (e.g., checking for mechanical, engine, or hydraulic conflicts) and issues structural counter-recommendations to the Configurator in a correction feedback loop.
-4. **Sentinel Agent (Stage 5)**: Scores deal health, financial risk parameters, gross margin baselines, historical conversion probabilities, and designs automated up-sell strategies.
-5. **Human-In-The-Loop Approval**: Allows standard equipment dealers to inspect the workflow state, manually edit components, evaluate analytics metrics dashboards, and push downstream signals directly to client ecosystems.
+## 1️⃣ RFQ Parser (Stage 1)
+
+* Cleans and strips metadata from raw RFQ emails
+* Extracts properties, parameters, constraints, and customer requirements
+* Converts unstructured text into structured machine-readable data
+
+## 2️⃣ Configurator Agent (Stage 2)
+
+* Engineers a matching Bill of Materials (BOM)
+* Cross-references OEM specifications and pricing models
+* Generates optimized equipment configurations
+
+## 3️⃣ Critic Agent (Stages 3 & 4)
+
+* Reviews engineering compliance and mechanical compatibility
+* Detects hydraulic, engine, or structural conflicts
+* Provides correction feedback loops to the Configurator Agent
+
+## 4️⃣ Sentinel Agent (Stage 5)
+
+* Evaluates deal health and financial risk
+* Scores gross margin baselines
+* Predicts historical conversion probabilities
+* Generates intelligent automated up-sell strategies
+
+## 5️⃣ Human-In-The-Loop Approval
+
+* Allows equipment dealers to inspect workflow states
+* Supports manual editing and overrides
+* Provides analytics dashboards and workflow visibility
+* Enables downstream integrations with client ecosystems
 
 ---
 
-## 💻 System Requirements & Dependencies
+# 💻 System Requirements
 
-Ensure your execution environment matches the baseline operational specifications outlined below:
+## 🖥️ Supported Operating Systems
 
-### 1. Environmental Thresholds
-- **Operating System**: Cross-compatible across macOS (14+ Sonoma/Sequoia), Linux (Ubuntu 22.04 LTS+), or Windows 10/11.
-- **Python Runtime Environment**: Version `3.10` or `3.11` (Strict Requirement).
+* macOS 14+ (Sonoma / Sequoia)
+* Ubuntu 22.04 LTS+
+* Windows 10 / 11
 
-### 2. Primary External Dependencies
-The following core framework configurations are required and handled by your environment layer:
-- `langgraph` (>=0.2.0) — Core multi-agent execution graphs
-- `langchain-google-genai` (>=1.0.0) — LLM interface for the Gemini base engine
-- `tavily-python` (>=0.3.0) — Dynamic compliance real-time verification engine
-- `streamlit` (>=1.35.0) — High-end V3.0 Dark Dashboard UI panel interface
-- `pandas` (>=2.0.0) — High-performance execution matrix dynamic visualization
+## 🐍 Python Version
+
+* Python `3.10` or `3.11` (**strict requirement**)
 
 ---
 
-## 🚀 Step-by-Step Installation & Local Setup
+# 📦 Dependencies
 
-Execute the steps below in sequence within your local terminal environment to initialize and boot the application:
+The following core frameworks are required and managed through `requirements.txt`:
 
-### Step 1: Clone the Repository
-Clone your project repository down locally and change into the directory workspace root:
+```txt
+langgraph>=0.2.0
+langchain-google-genai>=1.0.0
+langchain-core>=0.2.0
+tavily-python>=0.3.0
+python-dotenv>=1.0.0
+streamlit>=1.35.0
+pandas>=2.0.0
+```
 
+### Dependency Overview
+
+| Package                  | Purpose                                |
+| ------------------------ | -------------------------------------- |
+| `langgraph`              | Multi-agent execution orchestration    |
+| `langchain-google-genai` | Gemini LLM integration                 |
+| `langchain-core`         | Message and state abstraction          |
+| `tavily-python`          | Real-time compliance verification      |
+| `python-dotenv`          | Secure environment variable management |
+| `streamlit`              | Interactive dashboard UI               |
+| `pandas`                 | Data processing and visualization      |
+
+---
+
+# 🚀 Installation & Local Setup
+
+Follow the steps below to initialize AgroPilot locally.
+
+---
+
+## Step 1 — Clone the Repository
+
+```bash
 git clone <YOUR_PUBLIC_GITHUB_REPOSITORY_LINK>
-cd agropilot
+cd AgroPilot
+```
 
-### Step 2: Establish an Isolated Virtual Environment
-Initialize a local runtime container to keep external package distributions clean and organized:
+---
 
-bash
-# On macOS / Linux Systems:
+## Step 2 — Create a Virtual Environment
+
+### macOS / Linux
+
+```bash
 python3 -m venv venv
 source venv/bin/activate
+```
 
-# On Windows Systems (Command Prompt):
+### Windows (Command Prompt)
+
+```bash
 python -m venv venv
 .\venv\Scripts\activate
+```
 
-# On Windows Systems (PowerShell):
+### Windows (PowerShell)
+
+```powershell
 python -m venv venv
 .\venv\Scripts\Activate.ps1
+```
 
-### Step 3: Install Package Prerequisites
-Leverage python's package manager dependency layout rules to bring down framework resources automatically:
+---
 
-Bash
+## Step 3 — Install Dependencies
+
+```bash
 pip install --upgrade pip
 pip install -r requirements.txt
-⚙️ Configuration & Token Isolation (.env)
-AgroPilot securely decouples infrastructure execution codes from proprietary tokens using environment wrappers. The tracking layer enforces exclusion parameters through the project .gitignore file to ensure security tokens are never pushed to public version history nodes.
+```
 
-Generate a brand new environment token state configuration sheet directly within your project root root-path:
+---
 
-Bash
+# ⚙️ Environment Configuration
+
+AgroPilot uses environment variables to securely isolate API credentials and infrastructure tokens.
+
+Create a `.env` file inside the project root:
+
+```bash
 touch .env
-Open your .env configuration text block using any text-editor workspace tool and structure it using this clear blueprint token format:
+```
 
-Code snippet
+Add the following configuration:
+
+```env
 GOOGLE_API_KEY=YOUR_API_KEY_HERE
 TAVILY_API_KEY=YOUR_TAVILY_API_KEY_HERE
-⚠️ Evaluation Notice for Hackathon Judges: Replace the placeholders above with your personal GOOGLE_API_KEY obtained from Google AI Studio and an active TAVILY_API_KEY to run the agent search actions properly.
+```
 
-🖥️ Running the Application
-AgroPilot can be verified through its terminal core emulation engine or natively within its premium V3.0 Dark Interactive Sales Dashboard.
+> ⚠️ **Hackathon Evaluation Notice**
+> Replace the placeholders above with:
+>
+> * A valid `GOOGLE_API_KEY` from Google AI Studio
+> * An active `TAVILY_API_KEY`
+>
+> These keys are required for agent orchestration and real-time search verification.
 
-Launching the Dashboard Panel (Recommended)
-To start up the Streamlit-based dark UI dashboard overlay window, execute:
+---
 
-Bash
+# 🖥️ Running the Application
+
+AgroPilot supports both:
+
+* Terminal-based execution
+* Interactive Streamlit dashboard mode
+
+---
+
+## 🌟 Launch the Dashboard (Recommended)
+
+Start the Streamlit dashboard:
+
+```bash
 streamlit run app.py
-Once tracking initialized, copy the generated local interface loopback address (typically http://localhost:8501) inside any standard web browser container.
+```
+
+Once initialized, open the generated local URL in your browser:
+
+```txt
+http://localhost:8501
+```
+
+---
+
+# ✨ Key Features
+
+* 🤖 Multi-agent CPQ automation
+* 🌾 Agricultural equipment configuration engine
+* 📧 Unstructured RFQ parsing
+* 🧠 Engineering compliance verification
+* 📊 Deal risk and margin analysis
+* 🔄 Stateful LangGraph orchestration
+* 🖥️ Interactive Streamlit dashboard
+* 👨‍💻 Human-in-the-loop validation workflow
+
+---
+
+# 🧩 Tech Stack
+
+| Layer               | Technology |
+| ------------------- | ---------- |
+| Agent Orchestration | LangGraph  |
+| LLM Engine          | Gemini     |
+| Backend Framework   | LangChain  |
+| Search Verification | Tavily     |
+| Dashboard UI        | Streamlit  |
+| Data Processing     | Pandas     |
+
+---
+
+# 📌 Project Context
+
+AgroPilot was developed for:
+
+**AI Marathon 2026 — Problem Statement 1: The Autonomous Sales Engineer**
+
+The project focuses on automating complex agricultural equipment sales engineering workflows through intelligent multi-agent systems.
+
+---
+
+# 📄 License
+
+This project is intended for educational, research, and hackathon demonstration purposes.
+
