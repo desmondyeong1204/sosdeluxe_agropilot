@@ -164,7 +164,7 @@ def _call(system: str, user: str) -> str:
     if not key:
         return "__FALLBACK_TRIGGERED__"
     
-    delays = [1]
+    delays = [90]
     for attempt, delay in enumerate(delays):
         try:
             llm = ChatGoogleGenerativeAI(
@@ -178,7 +178,16 @@ def _call(system: str, user: str) -> str:
                 SystemMessage(content=system),
                 HumanMessage(content=user),
             ])
-            return resp.content
+            content = resp.content
+            if isinstance(content, list):
+                parts = []
+                for part in content:
+                    if isinstance(part, dict) and "text" in part:
+                        parts.append(part["text"])
+                    elif isinstance(part, str):
+                        parts.append(part)
+                content = "".join(parts)
+            return content
         except Exception:
             if attempt < len(delays) - 1:
                 time.sleep(delay)

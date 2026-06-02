@@ -1,5 +1,4 @@
-#!/Users/chiyuan/Tiong Chi Yuan/AI/aimarathon_sosdeluxe/agropilot/venv/bin/python3
-# -*- coding: utf-8 -*-
+#!/Users/chiyuan/Tiong Chi Yuan/AI/aimarathon_sosdeluxe/agropilot/venv/bin/python3.11
 
 
 import argparse

@@ -7,6 +7,86 @@ import os, time, queue, threading
 import streamlit as st
 import pandas as pd
 from agent import build_graph, SAMPLE_RFQ, QuoteState, _calculate_totals
+from mcp_agent import run_post_approval_agent
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GMAIL INBOX LOADER (optional RFQ source)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _gmail_extract_text(payload: dict) -> str:
+    """Extract best-effort plain text from Gmail API message payload."""
+    import base64
+
+    def _decode(data: str) -> str:
+        if not data:
+            return ""
+        try:
+            return base64.urlsafe_b64decode(data.encode("utf-8")).decode("utf-8", errors="replace")
+        except Exception:
+            return ""
+
+    # Direct body
+    body = (payload.get("body") or {}).get("data")
+    if body:
+        return _decode(body)
+
+    # Multipart walk
+    parts = payload.get("parts") or []
+    stack = list(parts)
+    best_plain = ""
+    best_html = ""
+    while stack:
+        p = stack.pop(0) or {}
+        mime = (p.get("mimeType") or "").lower()
+        bdata = ((p.get("body") or {}).get("data")) or ""
+        if mime == "text/plain" and bdata:
+            best_plain = best_plain or _decode(bdata)
+        elif mime == "text/html" and bdata:
+            best_html = best_html or _decode(bdata)
+        stack.extend(p.get("parts") or [])
+
+    if best_plain.strip():
+        return best_plain
+    if best_html.strip():
+        # Simple HTML strip fallback
+        import re
+        text = re.sub(r"<[^>]+>", " ", best_html)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+    return ""
+
+
+def gmail_fetch_latest_rfq(query: str, token_path: str) -> dict:
+    """Fetch latest Gmail message matching `query` and return {subject, from, date, body}."""
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+
+    scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+    if not os.path.exists(token_path):
+        return {"success": False, "error": f"Gmail token file not found at {token_path}"}
+
+    creds = Credentials.from_authorized_user_file(token_path, scopes)
+    service = build("gmail", "v1", credentials=creds)
+
+    resp = service.users().messages().list(userId="me", q=query, maxResults=1).execute()
+    msgs = resp.get("messages") or []
+    if not msgs:
+        return {"success": False, "error": f"No Gmail messages matched query: {query}"}
+
+    msg_id = msgs[0]["id"]
+    msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
+    headers = {h.get("name", "").lower(): h.get("value", "") for h in (msg.get("payload", {}).get("headers") or [])}
+    payload = msg.get("payload") or {}
+
+    body_text = _gmail_extract_text(payload)
+    return {
+        "success": True,
+        "id": msg_id,
+        "subject": headers.get("subject", ""),
+        "from": headers.get("from", ""),
+        "date": headers.get("date", ""),
+        "body": body_text,
+    }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
@@ -578,7 +658,7 @@ if st.session_state.get("approved") and st.session_state.final_state:
     audit = fs.get("compliance", {})
     blocking = [o for o in audit.get("objections", []) if o.get("severity") == "BLOCKING"]
 
-    raw_location = parsed.get('farm_location', 'Story County, Iowa, USA')
+    raw_location = parsed.get('farm_location') or 'Story County, Iowa, USA'
     location_parts = raw_location.split(',')
     region_display = location_parts[-1].strip() if location_parts else raw_location
     
@@ -651,9 +731,45 @@ with st.container():
         )
 
     rfq_default = SCENARIOS[scenario]
+    if "rfq_text" not in st.session_state:
+        st.session_state.rfq_text = rfq_default
+
+    with st.expander("📥 Load RFQ from Gmail inbox", expanded=False):
+        st.markdown(
+            "<div style='color:#94a3b8;font-size:13px;margin-bottom:10px'>"
+            "Reads your latest matching email via Gmail API and loads it into the RFQ input."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        col_q, col_btn2 = st.columns([3, 1])
+        with col_q:
+            gmail_query = st.text_input(
+                "Gmail search query",
+                value='in:inbox newer_than:14d',
+                help='Examples: `from:dealer@example.com`, `subject:RFQ`, `newer_than:7d`',
+            )
+        with col_btn2:
+            load_gmail = st.button("Load latest", use_container_width=True)
+
+        if load_gmail:
+            token_path = os.getenv("GMAIL_TOKEN_PATH", os.path.join(os.path.dirname(__file__), "token_gmail.json"))
+            with st.spinner("Fetching latest email from Gmail..."):
+                result = gmail_fetch_latest_rfq(gmail_query, token_path=token_path)
+            if result.get("success"):
+                header = f"FROM: {result.get('from','')}\nSUBJECT: {result.get('subject','')}\nDATE: {result.get('date','')}\n\n"
+                st.session_state.rfq_text = (header + (result.get("body") or "")).strip()
+                st.success("Loaded latest matching email into RFQ input.")
+                st.rerun()
+            else:
+                st.error(result.get("error", "Failed to fetch Gmail message."))
+
+        if st.button("Reset to scenario text", use_container_width=True):
+            st.session_state.rfq_text = rfq_default
+            st.rerun()
+
     rfq = st.text_area(
         "RFQ Email",
-        value=rfq_default,
+        value=st.session_state.rfq_text,
         height=200,
         label_visibility="collapsed",
         placeholder="Paste dealer RFQ email here...",
@@ -980,6 +1096,7 @@ if st.session_state.pipeline_done and st.session_state.final_state:
           <div class="hitl-metric-value green">{margin:.1f}%</div>
         </div>
         <div class="hitl-metric">
+          <div class="hitl-metric-label">Win Probability</div>
           <div class="hitl-metric-value green">{win_prob}%</div>
         </div>
         <div class="hitl-metric">
@@ -1013,6 +1130,10 @@ if st.session_state.pipeline_done and st.session_state.final_state:
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button("✅  APPROVE & SUBMIT CONFIGURATION", type="primary", use_container_width=True):
+            with st.spinner("🤖 Agent dispatching downstream actions..."):
+                from mcp_agent import run_post_approval_agent
+                dispatch_result = run_post_approval_agent(st.session_state.final_state)
+                st.session_state.dispatch_result = dispatch_result
             st.session_state.approved = True
             st.rerun()
     with col_b:
