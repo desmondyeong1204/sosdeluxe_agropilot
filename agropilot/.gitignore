@@ -2,8 +2,14 @@
 .env
 .env.local
 .env.*.local
+
+# Private Keys & Certificates (ignore all EXCEPT .example versions for reference)
 *.pem
 *.key
+*.crt
+!*.pem.example
+!*.crt.example
+!*.key.example
 
 # API Credentials & Tokens
 credential_gmail.json

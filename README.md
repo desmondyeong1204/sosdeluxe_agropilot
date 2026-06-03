@@ -348,8 +348,35 @@ agropilot/
 ├── docusign_private.pem    # DocuSign RSA private key (DO NOT COMMIT)
 ├── server_rsa.pem          # Salesforce JWT RSA private key (DO NOT COMMIT)
 ├── server.crt              # Salesforce certificate (optional, DO NOT COMMIT)
+├── server_rsa.pem.example  # Example Salesforce private key (SAFE - for reference only)
+├── server.crt.example      # Example Salesforce certificate (SAFE - for reference only)
+├── docusign_private.pem.example  # Example DocuSign private key (SAFE - for reference only)
 └── requirements.txt        # Python dependencies
 ```
+
+---
+
+# 📝 Setting Up Private Key Files
+
+Three critical files use private keys. Each has an `.example` file you can reference:
+
+### **Salesforce JWT Private Key** (`server_rsa.pem`)
+1. View example: [server_rsa.pem.example](agropilot/server_rsa.pem.example)
+2. Get your actual key from: Salesforce Connected App → Certificates → Download Private Key
+3. Save as: `agropilot/server_rsa.pem` (your key will look similar to the example, but different)
+4. **Never commit** your actual key — it's in `.gitignore`
+
+### **Salesforce Certificate** (`server.crt` - Optional)
+1. View example: [server.crt.example](agropilot/server.crt.example)
+2. Get your actual cert from: Salesforce Connected App → Certificates → Download Certificate
+3. Save as: `agropilot/server.crt` (optional for this OAuth flow)
+4. **Never commit** your actual certificate
+
+### **DocuSign Private Key** (`docusign_private.pem`)
+1. View example: [docusign_private.pem.example](agropilot/docusign_private.pem.example)
+2. Get your actual key from: DocuSign Integration Key → Download Private Key
+3. Save as: `agropilot/docusign_private.pem` (your key will look similar to the example)
+4. **Never commit** your actual key — it's in `.gitignore`
 
 ---
 
@@ -359,12 +386,17 @@ agropilot/
 - `.env` — contains all API keys and secrets
 - `credential_gmail.json` — Gmail OAuth credentials
 - `token_gmail.json` — Gmail OAuth access token
-- `docusign_private.pem` — DocuSign private key
+- `docusign_private.pem` — DocuSign private key ⚠️ **CRITICAL**
 - `server_rsa.pem` — Salesforce JWT private key ⚠️ **CRITICAL**
 - `server.crt` — Salesforce certificate (optional)
 - Any API keys, secrets, or authentication tokens
 
-These are already in `.gitignore`. Double-check before pushing! 🔒
+**Safe to commit:**
+- `.env.example` — template showing all required variables
+- `*.example` files — dummy examples showing file format/structure
+- `.gitignore` — protection patterns
+
+These are already configured in `.gitignore`. Double-check before pushing! 🔒
 
 ---
 
