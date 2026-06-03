@@ -91,8 +91,11 @@ MANDATORY RULES — you must follow these or the deal fails:
    slack_notify_manager, or gmail_send_quote. If validate_intent returns approved=false, STOP.
 2. ALWAYS check salesforce_get_account before creating an opportunity. Reuse existing account IDs.
 3. ALWAYS create the Salesforce opportunity BEFORE sending DocuSign (you need the opp URL for Slack).
-4. Send gmail_send_quote AND docusign_send_envelope to the dealer/signer.
-5. After all actions succeed, report a structured JSON summary of every action taken.
+4. **REQUIRED: docusign_send_envelope MUST be called to send the quote for e-signature.**
+5. Send gmail_send_quote AND docusign_send_envelope to the dealer/signer.
+6. Do NOT stop until you have attempted all 6 tools in order: validate_intent → salesforce_get_account 
+   → salesforce_create_opportunity → docusign_send_envelope → slack_notify_manager → gmail_send_quote.
+7. After all actions succeed (or fail with clear error), report a structured JSON summary of every action taken.
 
 DYNAMIC BEHAVIOUR — you decide:
 - If the dealer email is missing, skip gmail_send_quote and note why.
@@ -190,7 +193,7 @@ def run_post_approval_agent(final_state: dict, max_iterations: int = 20) -> dict
 
     user_prompt = f"""
 The following AgriQuote deal has been APPROVED by the human sales manager.
-Execute all required downstream actions now.
+Execute ALL required downstream actions now — do not stop early.
 
 APPROVED QUOTE CONTEXT:
 {json.dumps(context, indent=2)}
@@ -198,10 +201,16 @@ APPROVED QUOTE CONTEXT:
 Full quote document excerpt:
 {final_state.get('final_quotation', '')[:1000]}
 
-Proceed autonomously. Call tools in the correct order.
-Remember: validate_intent → salesforce_get_account → salesforce_create_opportunity → 
-docusign_send_envelope → slack_notify_manager → gmail_send_quote.
-Adapt if any data is missing. Return your final JSON summary when all actions are done.
+CRITICAL: You must call all 6 tools in this exact order:
+  1. validate_intent (GUARDRAIL)
+  2. salesforce_get_account (check for existing account)
+  3. salesforce_create_opportunity (create/update CRM deal)
+  4. docusign_send_envelope (SEND ENVELOPE FOR SIGNATURE - DO NOT SKIP)
+  5. slack_notify_manager (notify sales team)
+  6. gmail_send_quote (email the quote)
+
+Do NOT declare completion until all 6 tools have been executed. Proceed autonomously.
+Return your final JSON summary only when all actions are done.
 """
 
     messages = [

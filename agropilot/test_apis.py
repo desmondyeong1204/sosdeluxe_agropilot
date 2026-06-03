@@ -240,7 +240,7 @@ def test_gmail():
     from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import build
 
-    creds_path = os.getenv("GMAIL_CREDENTIALS_PATH", "gmail_credentials.json")
+    creds_path = os.getenv("CREDENTIAL_GMAIL_PATH", "credential_gmail.json")
     token_path = "token_gmail.json"
     scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
 

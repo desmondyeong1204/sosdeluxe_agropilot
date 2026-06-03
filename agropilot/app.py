@@ -1132,7 +1132,7 @@ if st.session_state.pipeline_done and st.session_state.final_state:
         if st.button("✅  APPROVE & SUBMIT CONFIGURATION", type="primary", use_container_width=True):
             with st.spinner("🤖 Agent dispatching downstream actions..."):
                 from mcp_agent import run_post_approval_agent
-                dispatch_result = run_post_approval_agent(st.session_state.final_state)
+                dispatch_result = run_post_approval_agent(st.session_state.final_state, max_iterations=11)
                 st.session_state.dispatch_result = dispatch_result
             st.session_state.approved = True
             st.rerun()
