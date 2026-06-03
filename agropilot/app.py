@@ -6,8 +6,12 @@ Run: streamlit run app.py
 import os, time, queue, threading
 import streamlit as st
 import pandas as pd
-from agent import build_graph, SAMPLE_RFQ, QuoteState, _calculate_totals
-from mcp_agent import run_post_approval_agent
+import pathlib
+from agent_configuration.agent import build_graph, QuoteState, _calculate_totals
+from mcp_architecture.mcp_agent import run_post_approval_agent
+from dotenv import load_dotenv
+from anyio import Path  
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GMAIL INBOX LOADER (optional RFQ source)
@@ -61,7 +65,11 @@ def gmail_fetch_latest_rfq(query: str, token_path: str) -> dict:
     from google.oauth2.credentials import Credentials
     from googleapiclient.discovery import build
 
-    scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+    scopes = [
+        "https://www.googleapis.com/auth/gmail.readonly"
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/gmail.compose",
+        ]
     if not os.path.exists(token_path):
         return {"success": False, "error": f"Gmail token file not found at {token_path}"}
 
@@ -387,92 +395,6 @@ if "all_logs"      not in st.session_state:
     st.session_state.all_logs      = []
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SCENARIOS
-# ─────────────────────────────────────────────────────────────────────────────
-
-SCENARIOS = {
-    "🌾 Malaysia Paddy Field — Kubota (VRA Fertilizer Spreading)": """From: rahim.ali@kedah-padi-mas.com.my
-Subject: RFQ-2026-MY-0711 — Paddy Tractors & Precision VRA Spreaders
-
-Dear Sales Team,
-
-We are looking to secure a precision tractor configuration for our consolidated paddy rice farming group in Alor Setar, Kedah, Malaysia. We farm 1,200 hectares of paddy fields and require high-precision fertilizer spreading to optimize crop yields and reduce nitrogen runoff.
-
-EQUIPMENT REQUESTED:
-- Base model: Kubota M9540 Utility Tractor (or equivalent)
-- Engine: 4-cylinder turbocharged diesel
-- Transmission: Hydraulic Shuttle (must support ultra-low speed creeper gear for heavy mud paddy traction)
-- Hydraulics: High-flow hydraulics for precision implement driving
-- Cab: Air-conditioned enclosed cabin (essential for hot, humid equatorial conditions)
-
-PRECISION TECHNOLOGY:
-- GPS auto-steer guidance system (sub-meter accuracy for row crop tracking)
-- Variable Rate Application (VRA) fertilizer controller
-- Telematics module (fleet tracking across separate blocks)
-
-IMPLEMENTS COMPATIBILITY:
-- Heavy-duty Paddy Rotary Tiller (wide floatation)
-- Precision Variable Rate Fertilizer Spreader
-
-COMPLIANCE:
-- Must meet Malaysia SIRIM safety and noise regulation guidelines
-- Engine emissions must meet local JAS Euro III / Stage IIIa equivalents
-
-FARM DETAILS:
-- Operator: Kedah Padi Mas Co-operative (Rahim Ali)
-- Location: Alor Setar, Kedah, Malaysia
-- Delivery required: August 2026 (before the secondary wet season planting)
-
-BUDGET GUIDANCE: RM 90,000 — 130,000
-
-Regards,
-Rahim Ali — Fleet Operations Director, Kedah Padi Mas""".strip(),
-    "🌽 Iowa Row-Crop — John Deere (conflict loop demo)": SAMPLE_RFQ.strip(),
-    "🐄 Australia Livestock — Case IH": """From: b.murphy@sunrisefarm-equipment.com.au
-Subject: RFQ-2026-AU-0089 — Case IH Optum 300 CVX Configuration
-
-Dear Sales Team,
-
-Configuring a tractor for a mixed livestock and cropping operation in Queensland.
-
-EQUIPMENT REQUESTED:
-- Base model: Case IH Optum 300 CVX
-- Engine: 6-cylinder diesel
-- Transmission: CVT
-- Hydraulics: High-flow
-- Cab: Standard enclosed cab
-
-PRECISION TECHNOLOGY:
-- AFS GPS auto-steer
-- AFS Connect telematics
-
-IMPLEMENTS:
-- Front end loader (Quicke Q7M)
-- 3-point linkage rear blade
-
-FARM DETAILS:
-- Operator: Sunrise Station Pty Ltd (Bruce Murphy)
-- Location: Darling Downs, Queensland, Australia
-- Delivery required: March 2026
-
-BUDGET GUIDANCE: AUD 270,000 — 310,000
-
-Regards, Brett Wilson — Sunrise Farm Equipment""".strip(),
-    "✍️ Write your own RFQ": "",
-}
-
-HINTS = {
-    "🌾 Malaysia Paddy Field — Kubota (VRA Fertilizer Spreading)":
-        "🇲🇾 Tests Malaysian compliance (SIRIM safety, Euro III emissions) and muddy paddy traction creeper gear constraints. Watch the Critic flag a mid-range hydraulic conflict with the VRA spreader.",
-    "🌽 Iowa Row-Crop — John Deere (conflict loop demo)":
-        "⚡ Contains a 9-cylinder engine + CommandQuad transmission conflict. Watch the CRITIC flag it and the CONFIGURATOR resolve it in the debate loop.",
-    "🐄 Australia Livestock — Case IH":
-        "🇦🇺 Tests Australian compliance (ROPS AS 1636, ADR emissions). Should clear in round 1.",
-    "✍️ Write your own RFQ":
-        "📝 Paste any dealer RFQ email. Include: brand, model, engine, transmission, hydraulics, cab, precision tech, location, budget.",
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -651,18 +573,41 @@ st.markdown("""
 # ─────────────────────────────────────────────────────────────────────────────
 
 if st.session_state.get("approved") and st.session_state.final_state:
-    fs = st.session_state.final_state
-    hitl = fs.get("hitl", {})
+    fs      = st.session_state.final_state
+    hitl    = fs.get("hitl", {})
     elapsed = st.session_state.elapsed
-    parsed = fs.get("parsed_rfq", {})
-    audit = fs.get("compliance", {})
+    parsed  = fs.get("parsed_rfq", {})
+    audit   = fs.get("compliance", {})
     blocking = [o for o in audit.get("objections", []) if o.get("severity") == "BLOCKING"]
+    dispatch = st.session_state.get("dispatch_result", {})
 
     raw_location = parsed.get('farm_location') or 'Story County, Iowa, USA'
     location_parts = raw_location.split(',')
     region_display = location_parts[-1].strip() if location_parts else raw_location
-    
     curr_sym = parsed.get("currency_symbol", hitl.get("currency_symbol", "$"))
+
+    # Build action badges dynamically from real dispatch results
+    completed = dispatch.get("actions_completed", [])
+    failed    = dispatch.get("actions_failed", [])
+
+    ACTION_LABELS = {
+        "salesforce_create_opportunity": "SALESFORCE CREATED",
+        "docusign_send_envelope":        "DOCUSIGN SENT",
+        "slack_notify_manager":          "SLACK NOTIFIED",
+        "gmail_send_quote":              "QUOTE EMAILED",
+    }
+
+    badges_html = ""
+    for action_key, label in ACTION_LABELS.items():
+        if any(action_key in c for c in completed):
+            badges_html += f'<div class="action-badge">✓ {label}</div>'
+        elif any(action_key in f for f in failed):
+            badges_html += f'<div class="action-badge" style="border-color:#f43f5e;color:#fda4af;">⚠ {label} (failed)</div>'
+        else:
+            badges_html += f'<div class="action-badge" style="opacity:0.4">— {label} (skipped)</div>'
+
+    sf_url = dispatch.get("salesforce_url", "")
+    sf_link = f'<a href="{sf_url}" target="_blank" style="color:#818cf8;font-size:12px;">View in Salesforce →</a>' if sf_url else ""
 
     st.markdown(f"""
     <div class="completion-screen">
@@ -672,12 +617,8 @@ if st.session_state.get("approved") and st.session_state.final_state:
         Total elapsed agent time: <span class="green">{fmt_time(elapsed)}</span>
         &nbsp;|&nbsp; Manual equivalent: <span class="red">9 days</span>
       </div>
-      <div class="completion-actions">
-        <div class="action-badge">✓ SALESFORCE CREATED</div>
-        <div class="action-badge">✓ DOCUSIGN SENT</div>
-        <div class="action-badge">✓ OEM PORTAL SUBMITTED</div>
-        <div class="action-badge">✓ SLACK NOTIFIED</div>
-      </div>
+      <div class="completion-actions">{badges_html}</div>
+      {sf_link}
       <div class="completion-stats">
         <div class="stat">
           <div class="stat-label">Client Region</div>
@@ -695,8 +636,18 @@ if st.session_state.get("approved") and st.session_state.final_state:
     </div>
     """, unsafe_allow_html=True)
 
+    # Fetch dispatch from session state safely so it always exists
+    dispatch = st.session_state.get("dispatch_result", {})
+
+    if dispatch.get("summary"):
+        st.markdown(
+            f"<div style='font-size:13px;color:#64748b;text-align:center;margin-top:-16px;padding-bottom:16px;'>"
+            f"Agent: {dispatch['summary']}</div>",
+            unsafe_allow_html=True
+        )
+
     if st.button("↺  RUN AGAIN", key="run_again"):
-        for k in ["approved","pipeline_done","final_state","elapsed","all_logs"]:
+        for k in ["approved","pipeline_done","final_state","elapsed","all_logs","dispatch_result"]:
             if k in st.session_state:
                 del st.session_state[k]
         st.rerun()
@@ -711,28 +662,15 @@ timer_val = fmt_time(st.session_state.elapsed) if st.session_state.pipeline_done
 hero_slot.markdown(render_hero(timer_val), unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SCENARIO SELECTOR + RFQ INPUT
+# RFQ INPUT & INBOX LOADER
 # ─────────────────────────────────────────────────────────────────────────────
 
 with st.container():
     st.markdown("<div style='padding: 0 32px 12px'>", unsafe_allow_html=True)
 
-    col_sc, col_hint = st.columns([1.2, 2])
-    with col_sc:
-        scenario = st.selectbox(
-            "Scenario Selection Matrix",
-            list(SCENARIOS.keys()),
-            label_visibility="collapsed",
-        )
-    with col_hint:
-        st.markdown(
-            f"<div style='font-size:13px;color:#8b949e;padding-top:8px;font-weight:500;'>{HINTS.get(scenario,'')}</div>",
-            unsafe_allow_html=True,
-        )
-
-    rfq_default = SCENARIOS[scenario]
+    # Initialize the session state text variable if it doesn't exist yet
     if "rfq_text" not in st.session_state:
-        st.session_state.rfq_text = rfq_default
+        st.session_state.rfq_text = ""
 
     with st.expander("📥 Load RFQ from Gmail inbox", expanded=False):
         st.markdown(
@@ -752,7 +690,7 @@ with st.container():
             load_gmail = st.button("Load latest", use_container_width=True)
 
         if load_gmail:
-            token_path = os.getenv("GMAIL_TOKEN_PATH", os.path.join(os.path.dirname(__file__), "token_gmail.json"))
+            token_path = os.getenv("GMAIL_TOKEN_PATH", os.path.join(os.path.dirname(__file__), "config", "token_gmail.json"))
             with st.spinner("Fetching latest email from Gmail..."):
                 result = gmail_fetch_latest_rfq(gmail_query, token_path=token_path)
             if result.get("success"):
@@ -763,17 +701,21 @@ with st.container():
             else:
                 st.error(result.get("error", "Failed to fetch Gmail message."))
 
-        if st.button("Reset to scenario text", use_container_width=True):
-            st.session_state.rfq_text = rfq_default
+        if st.button("Clear Text Area", use_container_width=True):
+            st.session_state.rfq_text = ""
             st.rerun()
 
+    # The remaining standalone input text area
     rfq = st.text_area(
         "RFQ Email",
         value=st.session_state.rfq_text,
-        height=200,
+        height=240,  # Slightly bumped height since the selector is gone
         label_visibility="collapsed",
         placeholder="Paste dealer RFQ email here...",
     )
+    BASE_DIR = pathlib.Path(__file__).resolve().parent
+    ENV_PATH = BASE_DIR / "config" / ".env"
+    load_dotenv(dotenv_path=ENV_PATH)
 
     col_btn, col_status = st.columns([1, 3])
     with col_btn:
@@ -1131,8 +1073,8 @@ if st.session_state.pipeline_done and st.session_state.final_state:
     with col_a:
         if st.button("✅  APPROVE & SUBMIT CONFIGURATION", type="primary", use_container_width=True):
             with st.spinner("🤖 Agent dispatching downstream actions..."):
-                from mcp_agent import run_post_approval_agent
-                dispatch_result = run_post_approval_agent(st.session_state.final_state, max_iterations=11)
+                from mcp_architecture.mcp_agent import run_post_approval_agent
+                dispatch_result = run_post_approval_agent(st.session_state.final_state, max_iterations=20)
                 st.session_state.dispatch_result = dispatch_result
             st.session_state.approved = True
             st.rerun()

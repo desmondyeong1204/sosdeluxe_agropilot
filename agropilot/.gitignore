@@ -3,7 +3,7 @@
 .env.local
 .env.*.local
 
-# Private Keys & Certificates (ignore all EXCEPT .example versions for reference)
+# Private Keys & Certificates (ignore all EXCEPT .example versions)
 *.pem
 *.key
 *.crt
@@ -11,13 +11,13 @@
 !*.crt.example
 !*.key.example
 
-# API Credentials & Tokens
-credential_gmail.json
-token_gmail.json
-docusign_private.pem
-server.pem
-server_rsa.pem
-server.crt
+# API Credentials & Tokens (in any subdirectory)
+**/credential_gmail.json
+**/token_gmail.json
+**/docusign_private.pem
+**/server.pem
+**/server_rsa.pem
+**/server.crt
 
 # Python
 __pycache__/
@@ -94,3 +94,8 @@ logs/
 *.temp
 ~*
 *.bak
+
+# Archive
+Archive/
+*.zip
+*.tar.gz
