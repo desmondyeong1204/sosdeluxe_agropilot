@@ -182,15 +182,21 @@ Then edit `.env` with your actual API keys (see reference in [.env.example](.env
 ### 3️⃣ **Google Gmail API** (Quote Delivery)
 **Purpose:** Send quotations to dealers via email
 
+**Required OAuth Scopes:**
+- `https://www.googleapis.com/auth/gmail.readonly` — Read, list, and parse inbound emails/attachments (for RFQ inbox loading)
+- `https://www.googleapis.com/auth/gmail.send` — Send emails with quotes to dealers
+- `https://www.googleapis.com/auth/gmail.compose` — Compose and draft emails
+
+**Setup:**
 1. Go to: [Google Cloud Console](https://console.cloud.google.com/auth/clients?facet_url=https:%2F%2Fcloud.google.com%2Fcloud-console&project=gen-lang-client-0935180708)
 2. Enable **Gmail API**
 3. Create **OAuth 2.0 Desktop Client** credentials
 4. Download `credential_gmail.json` and save to `agropilot/`
-5. Generate the token:
+5. Generate the token (requests all required scopes automatically):
    ```bash
    python generate_gmail_token.py
    ```
-   This creates `token_gmail.json` with proper send/compose permissions
+   This creates `token_gmail.json` with `gmail.readonly`, `gmail.send`, and `gmail.compose` permissions
 
 6. Add to `.env`:
    ```env
@@ -203,10 +209,17 @@ Then edit `.env` with your actual API keys (see reference in [.env.example](.env
 ### 4️⃣ **DocuSign API** (E-Signature)
 **Purpose:** Send quotes for digital signature
 
+**Required Permissions:**
+- `signature` — Send envelope for e-signature
+- `impersonation` — Send on behalf of the signer
+- Demo/Sandbox permissions for test environment
+
+**Setup:**
 1. Go to: [DocuSign Apps & Keys](https://apps-d.docusign.com/admin/authenticate?goTo=appsAndKeys)
 2. Create a new **Integration Key**
-3. Generate and download **RSA Private Key** → save as `docusign_private.pem` in `agropilot/`
-4. Add to `.env`:
+3. Enable **JWT Bearer Token Flow**
+4. Generate and download **RSA Private Key** → save as `docusign_private.pem` in `agropilot/`
+5. Add to `.env`:
    ```env
    DOCUSIGN_INTEGRATION_KEY=your_integration_key
    DOCUSIGN_USER_ID=your_user_id
@@ -221,10 +234,19 @@ Then edit `.env` with your actual API keys (see reference in [.env.example](.env
 ### 5️⃣ **Slack API** (Sales Team Notifications)
 **Purpose:** Notify sales managers when quotes are ready
 
+**Required Bot Token Scopes:**
+- [`app_mentions:read`](https://docs.slack.dev/reference/scopes/app_mentions:read) — View messages that mention the app in conversations
+- [`channels:read`](https://docs.slack.dev/reference/scopes/channels:read) — View basic information about public channels
+- [`chat:write`](https://docs.slack.dev/reference/scopes/chat:write) — Send messages as the Slack app
+- [`chat:write.public`](https://docs.slack.dev/reference/scopes/chat:write.public) — Send messages to channels the app isn't a member of
+- [`im:write`](https://docs.slack.dev/reference/scopes/im:write) — Start direct messages with people
+
+**Setup:**
 1. Go to: [Slack App Settings](https://app.slack.com/app-settings/T0B7JRYLKU5/A0B7FT2HMCK/oauth)
-2. Copy **Bot User OAuth Token** (starts with `xoxb-`)
-3. Copy **Channel ID** where notifications should post
-4. Add to `.env`:
+2. Verify all scopes above are granted under **Bot Token Scopes**
+3. Copy **Bot User OAuth Token** (starts with `xoxb-`)
+4. Identify **Channel ID** where notifications should post (e.g., `C0B7JRYLKU5`)
+5. Add to `.env`:
    ```env
    SLACK_BOT_TOKEN=xoxb-your-bot-token
    SLACK_CHANNEL_ID=C0B7JRYLKU5
@@ -235,18 +257,43 @@ Then edit `.env` with your actual API keys (see reference in [.env.example](.env
 ### 6️⃣ **Salesforce API** (CRM Integration)
 **Purpose:** Log deals and create opportunities in Salesforce
 
+AgroPilot uses **OAuth 2.0 JWT Bearer Token flow** (SOAP login is disabled on your org).
+
+**Required OAuth Scopes:**
+- `api` — Manage user data via APIs (create/update records)
+- `full` — Full access to the organization
+- `refresh_token` — Allow token refresh for long-running sessions
+
+**Required User Profile Permissions:**
+- System Administrator or Standard User (with appropriate custom permissions)
+- Pre-authorized users via Connected App Plugin Policies
+
+**Setup:**
 1. Go to: [Salesforce Connected Apps](https://orgfarm-946eeacba5-dev-ed.develop.my.salesforce-setup.com/lightning/setup/ManageExternalClientApplication/0xIfj0000009EQL/detail)
-2. Create **OAuth 2.0 Connected App**
-3. Get: **Client ID**, **Client Secret**, **Instance URL**, **Username**, **Password**
-4. Add to `.env`:
+2. Create **OAuth 2.0 Connected App** with **JWT Bearer Flow** enabled
+3. Select OAuth Scopes:
+   - ☑️ `api` (Manage user data via APIs)
+   - ☑️ `full` (Full access)
+   - ☑️ `refresh_token` (Perform requests at any time)
+4. Configure **Plugin Policies**: Permitted Users = Admin approved users are pre-authorized
+5. Select **Profiles** that can use this app:
+   - ☑️ System Administrator
+   - ☑️ Standard User
+6. Get: **Client ID** from the app details
+7. Generate **RSA Private Key** (if not already created):
+   - In Salesforce: Setup → Apps → App Manager → your connected app → Edit → Certificates
+   - Click **Create Certificate** (or use existing)
+   - Download the private key → save as `server_rsa.pem` in `agropilot/`
+   - (Optional: The certificate file `server.crt` is not needed for JWT flow)
+8. Add to `.env`:
    ```env
    SALESFORCE_CLIENT_ID=your_client_id
-   SALESFORCE_CLIENT_SECRET=your_client_secret
-   SALESFORCE_INSTANCE_URL=https://your-instance.salesforce.com
    SALESFORCE_USERNAME=your_salesforce_username
-   SALESFORCE_PASSWORD=your_salesforce_password
-   SALESFORCE_SECURITY_TOKEN=your_security_token
+   SALESFORCE_LOGIN_URL=https://login.salesforce.com
+   SALESFORCE_PRIVATE_KEY_PATH=server_rsa.pem
    ```
+
+**Note:** This uses JWT bearer authentication (not username/password). The private key file (`server_rsa.pem`) is essential and must never be committed to GitHub.
 
 ---
 
@@ -287,7 +334,7 @@ python agent.py
 
 ```
 agropilot/
-├── .env                    # Your API keys (DO NOT COMMIT)
+├── .env                    # Your API keys & credentials (DO NOT COMMIT)
 ├── .env.example            # Template for .env (safe to commit)
 ├── app.py                  # Streamlit dashboard
 ├── agent.py                # LangGraph multi-agent orchestration
@@ -298,7 +345,9 @@ agropilot/
 ├── test_apis.py            # API validation script
 ├── credential_gmail.json   # Gmail OAuth credentials (DO NOT COMMIT)
 ├── token_gmail.json        # Gmail OAuth token (DO NOT COMMIT)
-├── docusign_private.pem    # DocuSign private key (DO NOT COMMIT)
+├── docusign_private.pem    # DocuSign RSA private key (DO NOT COMMIT)
+├── server_rsa.pem          # Salesforce JWT RSA private key (DO NOT COMMIT)
+├── server.crt              # Salesforce certificate (optional, DO NOT COMMIT)
 └── requirements.txt        # Python dependencies
 ```
 
@@ -307,13 +356,15 @@ agropilot/
 # ⚠️ Security Notes
 
 **NEVER commit to GitHub:**
-- `.env`
-- `credential_gmail.json`
-- `token_gmail.json`
-- `docusign_private.pem`
-- Any API keys or secrets
+- `.env` — contains all API keys and secrets
+- `credential_gmail.json` — Gmail OAuth credentials
+- `token_gmail.json` — Gmail OAuth access token
+- `docusign_private.pem` — DocuSign private key
+- `server_rsa.pem` — Salesforce JWT private key ⚠️ **CRITICAL**
+- `server.crt` — Salesforce certificate (optional)
+- Any API keys, secrets, or authentication tokens
 
-These are already in `.gitignore`. Double-check before pushing!
+These are already in `.gitignore`. Double-check before pushing! 🔒
 
 ---
 
