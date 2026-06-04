@@ -64,7 +64,7 @@ def generate_gmail_token(credentials_file: str, output_file: str = "token_gmail.
 if __name__ == "__main__":
     import sys
     
-    BASE_DIR = pathlib.Path(__file__).resolve().parent
+    BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
     CONFIG_DIR = BASE_DIR / "config"
     
     # Automatically ensure the config directory exists

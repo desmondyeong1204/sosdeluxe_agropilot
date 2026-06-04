@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from agropilot.backend.agent_configuration.agent import QuoteState, build_graph
+from agropilot.agent_configuration.agent import QuoteState, build_graph
 
 
 @dataclass

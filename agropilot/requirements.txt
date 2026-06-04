@@ -22,8 +22,6 @@ google-auth-oauthlib>=1.3.0
 google-auth-httplib2>=0.2.0
 google-api-python-client>=2.0.0
 google-api-python-client 
-google-auth-oauthlib g
-oogle-auth-httplib2
 
 # Security & Authentication
 PyJWT>=2.0.0
