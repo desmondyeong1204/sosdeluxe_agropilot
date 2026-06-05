@@ -316,7 +316,7 @@ This will validate each API connection and display any missing credentials.
 
 ```bash
 cd agropilot
-streamlit app.py
+streamlit run app.py
 ```
 
 Open: `http://localhost:8501`
