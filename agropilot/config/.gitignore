@@ -1,0 +1,96 @@
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+
+# Private Keys & Certificates (ignore all EXCEPT .example versions for reference)
+*.pem
+*.key
+*.crt
+!*.pem.example
+!*.crt.example
+!*.key.example
+
+# API Credentials & Tokens
+credential_gmail.json
+token_gmail.json
+docusign_private.pem
+server.pem
+server_rsa.pem
+server.crt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Streamlit
+.streamlit/
+*.streamlit.runmem
+/.streamlit
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Temporary Files
+*.tmp
+*.temp
+~*
+*.bak

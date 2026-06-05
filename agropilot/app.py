@@ -3,10 +3,98 @@ app.py — AgriQuote · Dark UI matching QuotePilot V3.0 design
 Run: streamlit run app.py
 """
 
-import os, time
+import os, time, queue, threading
 import streamlit as st
 import pandas as pd
-from agent import build_graph, SAMPLE_RFQ, QuoteState, _calculate_totals
+import pathlib
+from agent_configuration.agent import build_graph, QuoteState, _calculate_totals
+from mcp_architecture.mcp_agent import run_post_approval_agent
+from dotenv import load_dotenv
+from anyio import Path  
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GMAIL INBOX LOADER (optional RFQ source)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _gmail_extract_text(payload: dict) -> str:
+    """Extract best-effort plain text from Gmail API message payload."""
+    import base64
+
+    def _decode(data: str) -> str:
+        if not data:
+            return ""
+        try:
+            return base64.urlsafe_b64decode(data.encode("utf-8")).decode("utf-8", errors="replace")
+        except Exception:
+            return ""
+
+    # Direct body
+    body = (payload.get("body") or {}).get("data")
+    if body:
+        return _decode(body)
+
+    # Multipart walk
+    parts = payload.get("parts") or []
+    stack = list(parts)
+    best_plain = ""
+    best_html = ""
+    while stack:
+        p = stack.pop(0) or {}
+        mime = (p.get("mimeType") or "").lower()
+        bdata = ((p.get("body") or {}).get("data")) or ""
+        if mime == "text/plain" and bdata:
+            best_plain = best_plain or _decode(bdata)
+        elif mime == "text/html" and bdata:
+            best_html = best_html or _decode(bdata)
+        stack.extend(p.get("parts") or [])
+
+    if best_plain.strip():
+        return best_plain
+    if best_html.strip():
+        # Simple HTML strip fallback
+        import re
+        text = re.sub(r"<[^>]+>", " ", best_html)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+    return ""
+
+
+def gmail_fetch_latest_rfq(query: str, token_path: str) -> dict:
+    """Fetch latest Gmail message matching `query` and return {subject, from, date, body}."""
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+
+    scopes = [
+        "https://www.googleapis.com/auth/gmail.readonly"
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/gmail.compose",
+        ]
+    if not os.path.exists(token_path):
+        return {"success": False, "error": f"Gmail token file not found at {token_path}"}
+
+    creds = Credentials.from_authorized_user_file(token_path, scopes)
+    service = build("gmail", "v1", credentials=creds)
+
+    resp = service.users().messages().list(userId="me", q=query, maxResults=1).execute()
+    msgs = resp.get("messages") or []
+    if not msgs:
+        return {"success": False, "error": f"No Gmail messages matched query: {query}"}
+
+    msg_id = msgs[0]["id"]
+    msg = service.users().messages().get(userId="me", id=msg_id, format="full").execute()
+    headers = {h.get("name", "").lower(): h.get("value", "") for h in (msg.get("payload", {}).get("headers") or [])}
+    payload = msg.get("payload") or {}
+
+    body_text = _gmail_extract_text(payload)
+    return {
+        "success": True,
+        "id": msg_id,
+        "subject": headers.get("subject", ""),
+        "from": headers.get("from", ""),
+        "date": headers.get("date", ""),
+        "body": body_text,
+    }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
@@ -307,92 +395,6 @@ if "all_logs"      not in st.session_state:
     st.session_state.all_logs      = []
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SCENARIOS
-# ─────────────────────────────────────────────────────────────────────────────
-
-SCENARIOS = {
-    "🌾 Malaysia Paddy Field — Kubota (VRA Fertilizer Spreading)": """From: rahim.ali@kedah-padi-mas.com.my
-Subject: RFQ-2026-MY-0711 — Paddy Tractors & Precision VRA Spreaders
-
-Dear Sales Team,
-
-We are looking to secure a precision tractor configuration for our consolidated paddy rice farming group in Alor Setar, Kedah, Malaysia. We farm 1,200 hectares of paddy fields and require high-precision fertilizer spreading to optimize crop yields and reduce nitrogen runoff.
-
-EQUIPMENT REQUESTED:
-- Base model: Kubota M9540 Utility Tractor (or equivalent)
-- Engine: 4-cylinder turbocharged diesel
-- Transmission: Hydraulic Shuttle (must support ultra-low speed creeper gear for heavy mud paddy traction)
-- Hydraulics: High-flow hydraulics for precision implement driving
-- Cab: Air-conditioned enclosed cabin (essential for hot, humid equatorial conditions)
-
-PRECISION TECHNOLOGY:
-- GPS auto-steer guidance system (sub-meter accuracy for row crop tracking)
-- Variable Rate Application (VRA) fertilizer controller
-- Telematics module (fleet tracking across separate blocks)
-
-IMPLEMENTS COMPATIBILITY:
-- Heavy-duty Paddy Rotary Tiller (wide floatation)
-- Precision Variable Rate Fertilizer Spreader
-
-COMPLIANCE:
-- Must meet Malaysia SIRIM safety and noise regulation guidelines
-- Engine emissions must meet local JAS Euro III / Stage IIIa equivalents
-
-FARM DETAILS:
-- Operator: Kedah Padi Mas Co-operative (Rahim Ali)
-- Location: Alor Setar, Kedah, Malaysia
-- Delivery required: August 2026 (before the secondary wet season planting)
-
-BUDGET GUIDANCE: RM 90,000 — 130,000
-
-Regards,
-Rahim Ali — Fleet Operations Director, Kedah Padi Mas""".strip(),
-    "🌽 Iowa Row-Crop — John Deere (conflict loop demo)": SAMPLE_RFQ.strip(),
-    "🐄 Australia Livestock — Case IH": """From: b.murphy@sunrisefarm-equipment.com.au
-Subject: RFQ-2026-AU-0089 — Case IH Optum 300 CVX Configuration
-
-Dear Sales Team,
-
-Configuring a tractor for a mixed livestock and cropping operation in Queensland.
-
-EQUIPMENT REQUESTED:
-- Base model: Case IH Optum 300 CVX
-- Engine: 6-cylinder diesel
-- Transmission: CVT
-- Hydraulics: High-flow
-- Cab: Standard enclosed cab
-
-PRECISION TECHNOLOGY:
-- AFS GPS auto-steer
-- AFS Connect telematics
-
-IMPLEMENTS:
-- Front end loader (Quicke Q7M)
-- 3-point linkage rear blade
-
-FARM DETAILS:
-- Operator: Sunrise Station Pty Ltd (Bruce Murphy)
-- Location: Darling Downs, Queensland, Australia
-- Delivery required: March 2026
-
-BUDGET GUIDANCE: AUD 270,000 — 310,000
-
-Regards, Brett Wilson — Sunrise Farm Equipment""".strip(),
-    "✍️ Write your own RFQ": "",
-}
-
-HINTS = {
-    "🌾 Malaysia Paddy Field — Kubota (VRA Fertilizer Spreading)":
-        "🇲🇾 Tests Malaysian compliance (SIRIM safety, Euro III emissions) and muddy paddy traction creeper gear constraints. Watch the Critic flag a mid-range hydraulic conflict with the VRA spreader.",
-    "🌽 Iowa Row-Crop — John Deere (conflict loop demo)":
-        "⚡ Contains a 9-cylinder engine + CommandQuad transmission conflict. Watch the CRITIC flag it and the CONFIGURATOR resolve it in the debate loop.",
-    "🐄 Australia Livestock — Case IH":
-        "🇦🇺 Tests Australian compliance (ROPS AS 1636, ADR emissions). Should clear in round 1.",
-    "✍️ Write your own RFQ":
-        "📝 Paste any dealer RFQ email. Include: brand, model, engine, transmission, hydraulics, cab, precision tech, location, budget.",
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -571,18 +573,41 @@ st.markdown("""
 # ─────────────────────────────────────────────────────────────────────────────
 
 if st.session_state.get("approved") and st.session_state.final_state:
-    fs = st.session_state.final_state
-    hitl = fs.get("hitl", {})
+    fs      = st.session_state.final_state
+    hitl    = fs.get("hitl", {})
     elapsed = st.session_state.elapsed
-    parsed = fs.get("parsed_rfq", {})
-    audit = fs.get("compliance", {})
+    parsed  = fs.get("parsed_rfq", {})
+    audit   = fs.get("compliance", {})
     blocking = [o for o in audit.get("objections", []) if o.get("severity") == "BLOCKING"]
+    dispatch = st.session_state.get("dispatch_result", {})
 
-    raw_location = parsed.get('farm_location', 'Story County, Iowa, USA')
+    raw_location = parsed.get('farm_location') or 'Story County, Iowa, USA'
     location_parts = raw_location.split(',')
     region_display = location_parts[-1].strip() if location_parts else raw_location
-    
     curr_sym = parsed.get("currency_symbol", hitl.get("currency_symbol", "$"))
+
+    # Build action badges dynamically from real dispatch results
+    completed = dispatch.get("actions_completed", [])
+    failed    = dispatch.get("actions_failed", [])
+
+    ACTION_LABELS = {
+        "salesforce_create_opportunity": "SALESFORCE CREATED",
+        "docusign_send_envelope":        "DOCUSIGN SENT",
+        "slack_notify_manager":          "SLACK NOTIFIED",
+        "gmail_send_quote":              "QUOTE EMAILED",
+    }
+
+    badges_html = ""
+    for action_key, label in ACTION_LABELS.items():
+        if any(action_key in c for c in completed):
+            badges_html += f'<div class="action-badge">✓ {label}</div>'
+        elif any(action_key in f for f in failed):
+            badges_html += f'<div class="action-badge" style="border-color:#f43f5e;color:#fda4af;">⚠ {label} (failed)</div>'
+        else:
+            badges_html += f'<div class="action-badge" style="opacity:0.4">— {label} (skipped)</div>'
+
+    sf_url = dispatch.get("salesforce_url", "")
+    sf_link = f'<a href="{sf_url}" target="_blank" style="color:#818cf8;font-size:12px;">View in Salesforce →</a>' if sf_url else ""
 
     st.markdown(f"""
     <div class="completion-screen">
@@ -592,12 +617,8 @@ if st.session_state.get("approved") and st.session_state.final_state:
         Total elapsed agent time: <span class="green">{fmt_time(elapsed)}</span>
         &nbsp;|&nbsp; Manual equivalent: <span class="red">9 days</span>
       </div>
-      <div class="completion-actions">
-        <div class="action-badge">✓ SALESFORCE CREATED</div>
-        <div class="action-badge">✓ DOCUSIGN SENT</div>
-        <div class="action-badge">✓ OEM PORTAL SUBMITTED</div>
-        <div class="action-badge">✓ SLACK NOTIFIED</div>
-      </div>
+      <div class="completion-actions">{badges_html}</div>
+      {sf_link}
       <div class="completion-stats">
         <div class="stat">
           <div class="stat-label">Client Region</div>
@@ -615,8 +636,18 @@ if st.session_state.get("approved") and st.session_state.final_state:
     </div>
     """, unsafe_allow_html=True)
 
+    # Fetch dispatch from session state safely so it always exists
+    dispatch = st.session_state.get("dispatch_result", {})
+
+    if dispatch.get("summary"):
+        st.markdown(
+            f"<div style='font-size:13px;color:#64748b;text-align:center;margin-top:-16px;padding-bottom:16px;'>"
+            f"Agent: {dispatch['summary']}</div>",
+            unsafe_allow_html=True
+        )
+
     if st.button("↺  RUN AGAIN", key="run_again"):
-        for k in ["approved","pipeline_done","final_state","elapsed","all_logs"]:
+        for k in ["approved","pipeline_done","final_state","elapsed","all_logs","dispatch_result"]:
             if k in st.session_state:
                 del st.session_state[k]
         st.rerun()
@@ -631,33 +662,60 @@ timer_val = fmt_time(st.session_state.elapsed) if st.session_state.pipeline_done
 hero_slot.markdown(render_hero(timer_val), unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SCENARIO SELECTOR + RFQ INPUT
+# RFQ INPUT & INBOX LOADER
 # ─────────────────────────────────────────────────────────────────────────────
 
 with st.container():
     st.markdown("<div style='padding: 0 32px 12px'>", unsafe_allow_html=True)
 
-    col_sc, col_hint = st.columns([1.2, 2])
-    with col_sc:
-        scenario = st.selectbox(
-            "Scenario Selection Matrix",
-            list(SCENARIOS.keys()),
-            label_visibility="collapsed",
-        )
-    with col_hint:
+    # Initialize the session state text variable if it doesn't exist yet
+    if "rfq_text" not in st.session_state:
+        st.session_state.rfq_text = ""
+
+    with st.expander("📥 Load RFQ from Gmail inbox", expanded=False):
         st.markdown(
-            f"<div style='font-size:13px;color:#8b949e;padding-top:8px;font-weight:500;'>{HINTS.get(scenario,'')}</div>",
+            "<div style='color:#94a3b8;font-size:13px;margin-bottom:10px'>"
+            "Reads your latest matching email via Gmail API and loads it into the RFQ input."
+            "</div>",
             unsafe_allow_html=True,
         )
+        col_q, col_btn2 = st.columns([3, 1])
+        with col_q:
+            gmail_query = st.text_input(
+                "Gmail search query",
+                value='in:inbox newer_than:14d',
+                help='Examples: `from:dealer@example.com`, `subject:RFQ`, `newer_than:7d`',
+            )
+        with col_btn2:
+            load_gmail = st.button("Load latest", use_container_width=True)
 
-    rfq_default = SCENARIOS[scenario]
+        if load_gmail:
+            token_path = os.getenv("GMAIL_TOKEN_PATH", os.path.join(os.path.dirname(__file__), "config", "token_gmail.json"))
+            with st.spinner("Fetching latest email from Gmail..."):
+                result = gmail_fetch_latest_rfq(gmail_query, token_path=token_path)
+            if result.get("success"):
+                header = f"FROM: {result.get('from','')}\nSUBJECT: {result.get('subject','')}\nDATE: {result.get('date','')}\n\n"
+                st.session_state.rfq_text = (header + (result.get("body") or "")).strip()
+                st.success("Loaded latest matching email into RFQ input.")
+                st.rerun()
+            else:
+                st.error(result.get("error", "Failed to fetch Gmail message."))
+
+        if st.button("Clear Text Area", use_container_width=True):
+            st.session_state.rfq_text = ""
+            st.rerun()
+
+    # The remaining standalone input text area
     rfq = st.text_area(
         "RFQ Email",
-        value=rfq_default,
-        height=200,
+        value=st.session_state.rfq_text,
+        height=240,  # Slightly bumped height since the selector is gone
         label_visibility="collapsed",
         placeholder="Paste dealer RFQ email here...",
     )
+    BASE_DIR = pathlib.Path(__file__).resolve().parent
+    ENV_PATH = BASE_DIR / "config" / ".env"
+    load_dotenv(dotenv_path=ENV_PATH)
 
     col_btn, col_status = st.columns([1, 3])
     with col_btn:
@@ -810,90 +868,119 @@ if run_clicked and rfq.strip():
     start_time  = time.time()
     accumulated_state = dict(initial)
 
-    try:
-        for step in graph.stream(initial):
-            node_name  = list(step.keys())[0]
-            node_state = step[node_name]
+    # ── Background worker streams graph steps into a queue ──────────────────
+    def _graph_worker(g, init, q):
+        try:
+            for s in g.stream(init):
+                q.put(("step", s))
+            q.put(("done", None))
+        except Exception as e:
+            q.put(("error", e))
 
+    _q = queue.Queue()
+    _t = threading.Thread(target=_graph_worker, args=(graph, initial, _q), daemon=True)
+    _t.start()
+
+    # ── Main thread: tick timer every 0.5 s, render on each new step ─────────
+    try:
+        while _t.is_alive() or not _q.empty():
+            # Always update the timer
             elapsed = int(time.time() - start_time)
             st.session_state.elapsed = elapsed
-
             hero_slot.markdown(render_hero(fmt_time(elapsed)), unsafe_allow_html=True)
 
-            for key, val in node_state.items():
-                if key == "log":
-                    accumulated_state["log"] = accumulated_state.get("log", []) + val
-                else:
-                    accumulated_state[key] = val
+            # Drain all queued steps that arrived since last tick
+            while True:
+                try:
+                    kind, data = _q.get_nowait()
+                except queue.Empty:
+                    break
 
-            pipeline_bar_slot.markdown(
-                render_pipeline_bar(NODE_STAGE.get(node_name, "")),
-                unsafe_allow_html=True,
-            )
+                if kind == "error":
+                    raise data
+                if kind == "done":
+                    continue
 
-            all_logs = accumulated_state["log"]
-            st.session_state.all_logs = all_logs
+                # kind == "step"
+                node_name  = list(data.keys())[0]
+                node_state = data[node_name]
 
-            swarm_badge = "badge-awaiting" if node_name != "node_generate_quote" else "badge-final"
-            swarm_label = "⏳ AWAITING" if node_name != "node_generate_quote" else "✓ COMPLETE"
+                for key, val in node_state.items():
+                    if key == "log":
+                        accumulated_state["log"] = accumulated_state.get("log", []) + val
+                    else:
+                        accumulated_state[key] = val
 
-            log_slot.markdown(f"""
-            <div class="panel">
-              <div class="panel-header">
-                <span class="panel-title">⚡ AGENT SWARM</span>
-                <span class="panel-badge {swarm_badge}">{swarm_label}</span>
-              </div>
-              <div class="panel-body" style="max-height:300px;overflow-y:auto">
-                {render_log(all_logs)}
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+                pipeline_bar_slot.markdown(
+                    render_pipeline_bar(NODE_STAGE.get(node_name, "")),
+                    unsafe_allow_html=True,
+                )
 
-            if node_name != "node_parse":
-                rfq_badge_slot.markdown(f"""
-                <div class="panel" style="margin-bottom:16px">
+                all_logs = accumulated_state["log"]
+                st.session_state.all_logs = all_logs
+
+                swarm_badge = "badge-awaiting" if node_name != "node_generate_quote" else "badge-final"
+                swarm_label = "⏳ AWAITING" if node_name != "node_generate_quote" else "✓ COMPLETE"
+
+                log_slot.markdown(f"""
+                <div class="panel">
                   <div class="panel-header">
-                    <span class="panel-title">📧 INBOUND RFQ</span>
-                    <span class="panel-badge badge-parsed">✓ PARSED</span>
+                    <span class="panel-title">⚡ AGENT SWARM</span>
+                    <span class="panel-badge {swarm_badge}">{swarm_label}</span>
                   </div>
-                  <div class="panel-body">
-                    <div class="rfq-text">{rfq_preview}</div>
+                  <div class="panel-body" style="max-height:300px;overflow-y:auto">
+                    {render_log(all_logs)}
                   </div>
                 </div>
                 """, unsafe_allow_html=True)
 
-            parsed_meta = accumulated_state.get("parsed_rfq", {})
-            curr_sym = parsed_meta.get("currency_symbol", "$")
+                if node_name != "node_parse":
+                    rfq_badge_slot.markdown(f"""
+                    <div class="panel" style="margin-bottom:16px">
+                      <div class="panel-header">
+                        <span class="panel-title">📧 INBOUND RFQ</span>
+                        <span class="panel-badge badge-parsed">✓ PARSED</span>
+                      </div>
+                      <div class="panel-body">
+                        <div class="rfq-text">{rfq_preview}</div>
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-            bom  = accumulated_state.get("bom", [])
-            tots = _calculate_totals(bom) if bom else {"subtotal":0,"delivery":0,"taxes":0,"total":0}
-            bom_badge = "badge-final" if accumulated_state.get("compliance_cleared") else "badge-awaiting"
-            bom_label = "✓ FINAL" if accumulated_state.get("compliance_cleared") else "⏳ DRAFT"
-            
-            bom_panel_header_slot.markdown(f"""
-            <div class="panel" style="margin-bottom:16px; padding-bottom:0px; border-bottom:none;">
-              <div class="panel-header">
-                <span class="panel-title">📋 BILL OF MATERIALS</span>
-                <span class="panel-badge {bom_badge}">{bom_label}</span>
-              </div>
-              <div class="panel-body" style="padding-bottom:0px;">
-            """, unsafe_allow_html=True)
-            bom_content_slot.markdown(render_bom_table(bom, tots, curr_sym), unsafe_allow_html=True)
+                parsed_meta = accumulated_state.get("parsed_rfq", {})
+                curr_sym = parsed_meta.get("currency_symbol", "$")
 
-            audit = accumulated_state.get("compliance", {})
-            cleared = accumulated_state.get("compliance_cleared", False)
-            audit_badge = "badge-cleared" if cleared else "badge-awaiting"
-            audit_label = "✓ CLEARED" if cleared else "⏳ AUDITING"
-            
-            audit_panel_header_slot.markdown(f"""
-            <div class="panel" style="padding-bottom:0px; border-bottom:none;">
-              <div class="panel-header">
-                <span class="panel-title">🛡️ AUDIT PROTOCOL</span>
-                <span class="panel-badge {audit_badge}">{audit_label}</span>
-              </div>
-              <div class="panel-body" style="padding-bottom:0px;">
-            """, unsafe_allow_html=True)
-            audit_content_slot.markdown(render_audit(audit), unsafe_allow_html=True)
+                bom  = accumulated_state.get("bom", [])
+                tots = _calculate_totals(bom) if bom else {"subtotal":0,"delivery":0,"taxes":0,"total":0}
+                bom_badge = "badge-final" if accumulated_state.get("compliance_cleared") else "badge-awaiting"
+                bom_label = "✓ FINAL" if accumulated_state.get("compliance_cleared") else "⏳ DRAFT"
+
+                bom_panel_header_slot.markdown(f"""
+                <div class="panel" style="margin-bottom:16px; padding-bottom:0px; border-bottom:none;">
+                  <div class="panel-header">
+                    <span class="panel-title">📋 BILL OF MATERIALS</span>
+                    <span class="panel-badge {bom_badge}">{bom_label}</span>
+                  </div>
+                  <div class="panel-body" style="padding-bottom:0px;">
+                """, unsafe_allow_html=True)
+                bom_content_slot.markdown(render_bom_table(bom, tots, curr_sym), unsafe_allow_html=True)
+
+                audit = accumulated_state.get("compliance", {})
+                cleared = accumulated_state.get("compliance_cleared", False)
+                audit_badge = "badge-cleared" if cleared else "badge-awaiting"
+                audit_label = "✓ CLEARED" if cleared else "⏳ AUDITING"
+
+                audit_panel_header_slot.markdown(f"""
+                <div class="panel" style="padding-bottom:0px; border-bottom:none;">
+                  <div class="panel-header">
+                    <span class="panel-title">🛡️ AUDIT PROTOCOL</span>
+                    <span class="panel-badge {audit_badge}">{audit_label}</span>
+                  </div>
+                  <div class="panel-body" style="padding-bottom:0px;">
+                """, unsafe_allow_html=True)
+                audit_content_slot.markdown(render_audit(audit), unsafe_allow_html=True)
+
+            time.sleep(0.5)   # yield for 0.5 s then tick timer again
 
     except Exception as exc:
         st.error(f"Pipeline error: {exc}")
@@ -951,6 +1038,7 @@ if st.session_state.pipeline_done and st.session_state.final_state:
           <div class="hitl-metric-value green">{margin:.1f}%</div>
         </div>
         <div class="hitl-metric">
+          <div class="hitl-metric-label">Win Probability</div>
           <div class="hitl-metric-value green">{win_prob}%</div>
         </div>
         <div class="hitl-metric">
@@ -984,6 +1072,10 @@ if st.session_state.pipeline_done and st.session_state.final_state:
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button("✅  APPROVE & SUBMIT CONFIGURATION", type="primary", use_container_width=True):
+            with st.spinner("🤖 Agent dispatching downstream actions..."):
+                from mcp_architecture.mcp_agent import run_post_approval_agent
+                dispatch_result = run_post_approval_agent(st.session_state.final_state, max_iterations=20)
+                st.session_state.dispatch_result = dispatch_result
             st.session_state.approved = True
             st.rerun()
     with col_b:

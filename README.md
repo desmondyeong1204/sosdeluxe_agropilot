@@ -135,55 +135,264 @@ pip install -r requirements.txt
 
 ---
 
-# ⚙️ Environment Configuration
+# ⚙️ Environment Configuration & API Keys
 
-AgroPilot uses environment variables to securely isolate API credentials and infrastructure tokens.
+AgroPilot integrates with **6 external APIs** for complete CPQ automation. Each API requires its own credentials.
 
-Create a `.env` file inside the project root:
+## Step 1 — Create `.env` File
+
+Create a `.env` file in the `agropilot/` directory:
 
 ```bash
-touch .env
+cd agropilot
+cp .env.example .env
 ```
 
-Add the following configuration:
-
-```env
-GOOGLE_API_KEY=YOUR_API_KEY_HERE
-TAVILY_API_KEY=YOUR_TAVILY_API_KEY_HERE
-```
-
-> ⚠️ **Hackathon Evaluation Notice**
-> Replace the placeholders above with:
->
-> * A valid `GOOGLE_API_KEY` from Google AI Studio
-> * An active `TAVILY_API_KEY`
->
-> These keys are required for agent orchestration and real-time search verification.
+Then edit `.env` with your actual API keys (see reference in [.env.example](.env.example)).
 
 ---
 
-# 🖥️ Running the Application
+## Step 2 — Configure Each API
 
-AgroPilot supports both:
+### 1️⃣ **Google Gemini API** (LLM Engine)
+**Purpose:** Powers the AI agents' reasoning and decision-making
 
-* Terminal-based execution
-* Interactive Streamlit dashboard mode
+1. Go to: [Google AI Studio](https://aistudio.google.com/app/apikeys?project=gen-lang-client-0528539577)
+2. Click **"Create API Key"**
+3. Copy the key and add to `.env`:
+   ```env
+   GOOGLE_API_KEY=your_gemini_api_key_here
+   GEMINI_API_KEY=your_gemini_api_key_here  # Alternative name
+   ```
 
 ---
 
-## 🌟 Launch the Dashboard (Recommended)
+### 2️⃣ **Tavily Search API** (Equipment & Compliance Lookup)
+**Purpose:** Real-time search for agricultural equipment specs and compliance requirements
 
-Start the Streamlit dashboard:
+1. Go to: [Tavily Home](https://app.tavily.com/home)
+2. Sign up and navigate to **API Keys**
+3. Copy your API key and add to `.env`:
+   ```env
+   TAVILY_API_KEY=your_tavily_api_key_here
+   ```
+
+---
+
+### 3️⃣ **Google Gmail API** (Quote Delivery)
+**Purpose:** Send quotations to dealers via email
+
+**Required OAuth Scopes:**
+- `https://www.googleapis.com/auth/gmail.readonly` — Read, list, and parse inbound emails/attachments (for RFQ inbox loading)
+- `https://www.googleapis.com/auth/gmail.send` — Send emails with quotes to dealers
+- `https://www.googleapis.com/auth/gmail.compose` — Compose and draft emails
+
+**Setup:**
+1. Go to: [Google Cloud Console](https://console.cloud.google.com/auth/clients?facet_url=https:%2F%2Fcloud.google.com%2Fcloud-console&project=gen-lang-client-0935180708)
+2. Enable **Gmail API**
+3. Create **OAuth 2.0 Desktop Client** credentials
+4. Download `credential_gmail.json` and save to `agropilot/config`
+5. Generate the token (requests all required scopes automatically):
+   ```bash
+   python config/generate_gmail_token.py
+   ```
+   This creates `token_gmail.json` with `gmail.readonly`, `gmail.send`, and `gmail.compose` permissions
+
+6. Add to `.env`:
+   ```env
+   GMAIL_TOKEN_PATH=config/token_gmail.json
+   CREDENTIAL_GMAIL_PATH=config/credential_gmail.json
+   ```
+
+---
+
+### 4️⃣ **DocuSign API** (E-Signature)
+**Purpose:** Send quotes for digital signature
+
+**Required Permissions:**
+- `signature` — Send envelope for e-signature
+- `impersonation` — Send on behalf of the signer
+- Demo/Sandbox permissions for test environment
+
+**Setup:**
+1. Go to: [DocuSign Apps & Keys](https://apps-d.docusign.com/admin/authenticate?goTo=appsAndKeys)
+2. Create a new **Integration Key**
+3. Enable **JWT Bearer Token Flow**
+4. Generate and download **RSA Private Key** → save as `docusign_private.pem` in `agropilot/`
+5. Add to `.env`:
+   ```env
+   DOCUSIGN_INTEGRATION_KEY=your_integration_key
+   DOCUSIGN_USER_ID=your_user_id
+   DOCUSIGN_API_ACCOUNT_ID=your_account_id
+   DOCUSIGN_AUTH_SERVER=account-d.docusign.com
+   DOCUSIGN_PRIVATE_KEY_PATH=docusign_rsa.pem
+   DOCUSIGN_BASE_PATH=https://demo.docusign.net/restapi
+   ```
+
+---
+
+### 5️⃣ **Slack API** (Sales Team Notifications)
+**Purpose:** Notify sales managers when quotes are ready
+
+**Required Bot Token Scopes:**
+- [`app_mentions:read`](https://docs.slack.dev/reference/scopes/app_mentions:read) — View messages that mention the app in conversations
+- [`channels:read`](https://docs.slack.dev/reference/scopes/channels:read) — View basic information about public channels
+- [`chat:write`](https://docs.slack.dev/reference/scopes/chat:write) — Send messages as the Slack app
+- [`chat:write.public`](https://docs.slack.dev/reference/scopes/chat:write.public) — Send messages to channels the app isn't a member of
+- [`im:write`](https://docs.slack.dev/reference/scopes/im:write) — Start direct messages with people
+
+**Setup:**
+1. Go to: [Slack App Settings](https://app.slack.com/app-settings/T0B7JRYLKU5/A0B7FT2HMCK/oauth)
+2. Verify all scopes above are granted under **Bot Token Scopes**
+3. Copy **Bot User OAuth Token** (starts with `xoxb-`)
+4. Identify **Channel ID** where notifications should post (e.g., `C0B7JRYLKU5`)
+5. Add to `.env`:
+   ```env
+   SLACK_BOT_TOKEN=xoxb-your-bot-token
+   SLACK_CHANNEL_ID=C0B7JRYLKU5
+   ```
+
+---
+
+### 6️⃣ **Salesforce API** (CRM Integration)
+**Purpose:** Log deals and create opportunities in Salesforce
+
+AgroPilot uses **OAuth 2.0 JWT Bearer Token flow** (SOAP login is disabled on your org).
+
+**Required OAuth Scopes:**
+- `api` — Manage user data via APIs (create/update records)
+- `full` — Full access to the organization
+- `refresh_token` — Allow token refresh for long-running sessions
+
+**Required User Profile Permissions:**
+- System Administrator or Standard User (with appropriate custom permissions)
+- Pre-authorized users via Connected App Plugin Policies
+
+**Setup:**
+1. Go to: [Salesforce Connected Apps](https://orgfarm-946eeacba5-dev-ed.develop.my.salesforce-setup.com/lightning/setup/ManageExternalClientApplication/0xIfj0000009EQL/detail)
+2. Create **OAuth 2.0 Connected App** with **JWT Bearer Flow** enabled
+3. Select OAuth Scopes:
+   - ☑️ `api` (Manage user data via APIs)
+   - ☑️ `full` (Full access)
+   - ☑️ `refresh_token` (Perform requests at any time)
+4. Configure **Plugin Policies**: Permitted Users = Admin approved users are pre-authorized
+5. Select **Profiles** that can use this app:
+   - ☑️ System Administrator
+   - ☑️ Standard User
+6. Get: **Client ID** from the app details
+7. Generate **RSA Private Key** (if not already created):
+   - In Salesforce: Setup → Apps → App Manager → your connected app → Edit → Certificates
+   - Click **Create Certificate** (or use existing)
+   - Download the private key → save as `server_rsa.pem` in `agropilot/`
+   - (Optional: The certificate file `server.crt` is not needed for JWT flow)
+8. Add to `.env`:
+   ```env
+   SALESFORCE_CLIENT_ID=your_client_id
+   SALESFORCE_USERNAME=your_salesforce_username
+   SALESFORCE_LOGIN_URL=https://login.salesforce.com
+   SALESFORCE_PRIVATE_KEY_PATH=salesforce_rsa.pem
+   ```
+
+**Note:** This uses JWT bearer authentication (not username/password). The private key file (`server_rsa.pem`) is essential and must never be committed to GitHub.
+
+---
+
+## ✅ Verification
+
+Test all APIs are configured correctly:
 
 ```bash
+cd agropilot
+python config/test_api.py
+```
+
+This will validate each API connection and display any missing credentials.
+
+---
+
+# 🚀 Running AgroPilot
+
+### Option 1: Interactive Dashboard (Recommended)
+
+```bash
+cd agropilot
 streamlit run app.py
 ```
 
-Once initialized, open the generated local URL in your browser:
+Open: `http://localhost:8501`
 
-```txt
-http://localhost:8501
+### Option 2: Command Line
+
+```bash
+cd agropilot
+python agent.py
 ```
+
+---
+
+# 📁 Project Structure
+
+```
+agropilot/
+├── agent_configuration/
+│   ├── agent.py                       # LangGraph multi-agent orchestration
+│   └── prompts.py                     # System prompts for all agents
+├── config/
+│   ├── .env.example                   # Your API keys & credentials (DO NOT COMMIT)
+│   ├── .gitignore
+│   ├── credential_gmail.example       # Gmail OAuth credentials (DO NOT COMMIT)
+│   ├── docusign_private.pem.example   # DocuSign JWT RSA private key (DO NOT COMMIT)
+│   ├── generate_gmail_token.py        # Run locally to get gmail token
+│   ├── salesforce_rsa.pem.example     # Salesforce JWT RSA private key (DO NOT COMMIT)
+│   └── test_api.py                    # API validation script
+├── mcp_architecture/
+│   ├── mcp_agent.py                   # Post-approval autonomous agent
+│   └── mcp_server.py                  # MCP tools (Salesforce, DocuSign, Gmail, Slack, Tavily)
+├── parser/
+│   ├── gmail_watcher.py
+│   └── pipeline_runner.py
+├── app.py                             # Streamlit dashboard
+├── requirements.txt                   # Python dependencies
+├── .gitignore
+└── README.md
+```
+
+---
+
+# 📝 Setting Up Private Key Files
+
+Three critical files use private keys. Each has an `.example` file you can reference:
+
+### **Salesforce JWT Private Key** (`salesforce_rsa.pem`)
+1. View example: [salesforce_rsa.pem.example](agropilot/config/salesforce_rsa.pem.example)
+2. Get your actual key from: Salesforce Connected App → Certificates → Download Private Key
+3. Save as: `agropilot/config/salesforces_rsa.pem` (your key will look similar to the example, but different)
+4. **Never commit** your actual key — it's in `.gitignore`
+
+### **DocuSign Private Key** (`docusign_private.pem`)
+1. View example: [docusign_rsa.pem.example](agropilot/config/docusign_rsa.pem.example)
+2. Get your actual key from: DocuSign Integration Key → Download Private Key
+3. Save as: `agropilot/config/docusign_private.pem` (your key will look similar to the example)
+4. **Never commit** your actual key — it's in `.gitignore`
+
+---
+
+# ⚠️ Security Notes
+
+**NEVER commit to GitHub:**
+- `.env` — contains all API keys and secrets
+- `credential_gmail.json` — Gmail OAuth credentials
+- `token_gmail.json` — Gmail OAuth access token
+- `docusign_rsae.pem` — DocuSign private key ⚠️ **CRITICAL**
+- `salesfoce_rsa.pem` — Salesforce JWT private key ⚠️ **CRITICAL**
+- Any API keys, secrets, or authentication tokens
+
+**Safe to commit:**
+- `.env.example` — template showing all required variables
+- `*.example` files — dummy examples showing file format/structure
+- `.gitignore` — protection patterns
+
+These are already configured in `.gitignore`. Double-check before pushing! 🔒
 
 ---
 
